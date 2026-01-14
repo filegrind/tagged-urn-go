@@ -1,6 +1,5 @@
-// Package capns provides the fundamental tagged URN system used across
-// all FGND plugins and providers. It defines the formal structure for cap
-// identifiers with flat tag-based naming, wildcard support, and specificity comparison.
+// Package capns provides the fundamental tagged URN system with flat tag-based
+// naming, wildcard support, and specificity comparison.
 package capns
 
 import (
@@ -13,14 +12,15 @@ import (
 	"unicode"
 )
 
-// TaggedUrn represents a tagged URN using flat, ordered tags
+// TaggedUrn represents a tagged URN using flat, ordered tags with a configurable prefix
 //
 // Examples:
-// - cap:op=generate;ext=pdf;out=std:binary.v1;target=thumbnail
-// - cap:op=extract;target=metadata
-// - cap:key="Value With Spaces"
+// - cap:op=generate;ext=pdf;out=binary;target=thumbnail
+// - myapp:key="Value With Spaces"
+// - custom:a=1;b=2
 type TaggedUrn struct {
-	tags map[string]string
+	prefix string
+	tags   map[string]string
 }
 
 // TaggedUrnError represents errors that can occur during tagged URN operations
@@ -39,11 +39,13 @@ const (
 	ErrorEmptyTag              = 2
 	ErrorInvalidCharacter      = 3
 	ErrorInvalidTagFormat      = 4
-	ErrorMissingCapPrefix      = 5
+	ErrorMissingPrefix         = 5
 	ErrorDuplicateKey          = 6
 	ErrorNumericKey            = 7
 	ErrorUnterminatedQuote     = 8
 	ErrorInvalidEscapeSequence = 9
+	ErrorEmptyPrefix           = 10
+	ErrorPrefixMismatch        = 11
 )
 
 // Parser states for state machine
@@ -96,12 +98,13 @@ func quoteValue(value string) string {
 }
 
 // NewTaggedUrnFromString creates a tagged URN from a string
-// Format: cap:key1=value1;key2=value2;... or cap:key1="value with spaces";key2=simple
-// The "cap:" prefix is mandatory
+// Format: prefix:key1=value1;key2=value2;... or prefix:key1="value with spaces";key2=simple
+// The prefix is required and ends at the first colon
 // Trailing semicolons are optional and ignored
 // Tags are automatically sorted alphabetically for canonical form
 //
 // Case handling:
+// - Prefix: Normalized to lowercase
 // - Keys: Always normalized to lowercase
 // - Unquoted values: Normalized to lowercase
 // - Quoted values: Case preserved exactly as specified
@@ -113,20 +116,29 @@ func NewTaggedUrnFromString(s string) (*TaggedUrn, error) {
 		}
 	}
 
-	// Check for "cap:" prefix (case-insensitive)
-	if len(s) < 4 || !strings.EqualFold(s[:4], "cap:") {
+	// Find the prefix (everything before the first colon)
+	colonPos := strings.Index(s, ":")
+	if colonPos == -1 {
 		return nil, &TaggedUrnError{
-			Code:    ErrorMissingCapPrefix,
-			Message: "tagged URN must start with 'cap:'",
+			Code:    ErrorMissingPrefix,
+			Message: "tagged URN must have a prefix followed by ':'",
 		}
 	}
 
-	tagsPart := s[4:]
+	if colonPos == 0 {
+		return nil, &TaggedUrnError{
+			Code:    ErrorEmptyPrefix,
+			Message: "tagged URN prefix cannot be empty",
+		}
+	}
+
+	prefix := strings.ToLower(s[:colonPos])
+	tagsPart := s[colonPos+1:]
 	tags := make(map[string]string)
 
-	// Handle empty tagged URN (cap: with no tags or just semicolon)
+	// Handle empty tagged URN (prefix: with no tags or just semicolon)
 	if tagsPart == "" || tagsPart == ";" {
-		return &TaggedUrn{tags: tags}, nil
+		return &TaggedUrn{prefix: prefix, tags: tags}, nil
 	}
 
 	state := stateExpectingKey
@@ -307,17 +319,27 @@ func NewTaggedUrnFromString(s string) (*TaggedUrn, error) {
 		}
 	}
 
-	return &TaggedUrn{tags: tags}, nil
+	return &TaggedUrn{prefix: prefix, tags: tags}, nil
 }
 
-// NewTaggedUrnFromTags creates a tagged URN from tags
+// NewTaggedUrnFromTags creates a tagged URN from tags with a specified prefix (required)
 // Keys are normalized to lowercase; values are preserved as-is
-func NewTaggedUrnFromTags(tags map[string]string) *TaggedUrn {
+func NewTaggedUrnFromTags(prefix string, tags map[string]string) *TaggedUrn {
 	result := make(map[string]string)
 	for k, v := range tags {
 		result[strings.ToLower(k)] = v
 	}
-	return &TaggedUrn{tags: result}
+	return &TaggedUrn{prefix: strings.ToLower(prefix), tags: result}
+}
+
+// Empty creates an empty tagged URN with the specified prefix (required)
+func Empty(prefix string) *TaggedUrn {
+	return &TaggedUrn{prefix: strings.ToLower(prefix), tags: make(map[string]string)}
+}
+
+// GetPrefix returns the prefix of this tagged URN
+func (c *TaggedUrn) GetPrefix() string {
+	return c.prefix
 }
 
 // GetTag returns the value of a specific tag
@@ -327,7 +349,7 @@ func (c *TaggedUrn) GetTag(key string) (string, bool) {
 	return value, exists
 }
 
-// HasTag checks if this cap has a specific tag with a specific value
+// HasTag checks if this URN has a specific tag with a specific value
 // Key is normalized to lowercase; value comparison is case-sensitive
 func (c *TaggedUrn) HasTag(key, value string) bool {
 	tagValue, exists := c.tags[strings.ToLower(key)]
@@ -342,7 +364,7 @@ func (c *TaggedUrn) WithTag(key, value string) *TaggedUrn {
 		newTags[k] = v
 	}
 	newTags[strings.ToLower(key)] = value
-	return &TaggedUrn{tags: newTags}
+	return &TaggedUrn{prefix: c.prefix, tags: newTags}
 }
 
 // WithoutTag returns a new tagged URN with a tag removed
@@ -355,56 +377,71 @@ func (c *TaggedUrn) WithoutTag(key string) *TaggedUrn {
 			newTags[k] = v
 		}
 	}
-	return &TaggedUrn{tags: newTags}
+	return &TaggedUrn{prefix: c.prefix, tags: newTags}
 }
 
-// Matches checks if this cap matches another based on tag compatibility
+// Matches checks if this URN matches another based on tag compatibility
 //
-// A cap matches a request if:
-// - For each tag in the request: cap has same value, wildcard (*), or missing tag
-// - For each tag in the cap: if request is missing that tag, that's fine (cap is more specific)
+// IMPORTANT: Both URNs must have the same prefix. Comparing URNs with
+// different prefixes is a programming error and will return an error.
+//
+// A URN matches a request if:
+// - Both have the same prefix
+// - For each tag in the request: URN has same value, wildcard (*), or missing tag
+// - For each tag in the URN: if request is missing that tag, that's fine (URN is more specific)
 // Missing tags are treated as wildcards (less specific, can handle any value).
-func (c *TaggedUrn) Matches(request *TaggedUrn) bool {
+func (c *TaggedUrn) Matches(request *TaggedUrn) (bool, error) {
 	if request == nil {
-		return true
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot match against nil request",
+		}
+	}
+
+	// First check prefix - must match exactly
+	if c.prefix != request.prefix {
+		return false, &TaggedUrnError{
+			Code:    ErrorPrefixMismatch,
+			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, request.prefix),
+		}
 	}
 
 	// Check all tags that the request specifies
 	for requestKey, requestValue := range request.tags {
-		capValue, exists := c.tags[requestKey]
+		urnValue, exists := c.tags[requestKey]
 		if !exists {
-			// Missing tag in cap is treated as wildcard - can handle any value
+			// Missing tag in URN is treated as wildcard - can handle any value
 			continue
 		}
 
-		if capValue == "*" {
-			// Cap has wildcard - can handle any value
+		if urnValue == "*" {
+			// URN has wildcard - can handle any value
 			continue
 		}
 
 		if requestValue == "*" {
-			// Request accepts any value - cap's specific value matches
+			// Request accepts any value - URN's specific value matches
 			continue
 		}
 
-		if capValue != requestValue {
-			// Cap has specific value that doesn't match request's specific value
-			return false
+		if urnValue != requestValue {
+			// URN has specific value that doesn't match request's specific value
+			return false, nil
 		}
 	}
 
-	// If cap has additional specific tags that request doesn't specify, that's fine
-	// The cap is just more specific than needed
-	return true
+	// If URN has additional specific tags that request doesn't specify, that's fine
+	// The URN is just more specific than needed
+	return true, nil
 }
 
-// CanHandle checks if this cap can handle a request
-func (c *TaggedUrn) CanHandle(request *TaggedUrn) bool {
+// CanHandle checks if this URN can handle a request
+func (c *TaggedUrn) CanHandle(request *TaggedUrn) (bool, error) {
 	return c.Matches(request)
 }
 
-// Specificity returns the specificity score for cap matching
-// More specific caps have higher scores and are preferred
+// Specificity returns the specificity score for URN matching
+// More specific URNs have higher scores and are preferred
 func (c *TaggedUrn) Specificity() int {
 	// Count non-wildcard tags
 	count := 0
@@ -416,30 +453,56 @@ func (c *TaggedUrn) Specificity() int {
 	return count
 }
 
-// IsMoreSpecificThan checks if this cap is more specific than another
-func (c *TaggedUrn) IsMoreSpecificThan(other *TaggedUrn) bool {
+// IsMoreSpecificThan checks if this URN is more specific than another
+func (c *TaggedUrn) IsMoreSpecificThan(other *TaggedUrn) (bool, error) {
 	if other == nil {
-		return true
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot compare against nil URN",
+		}
 	}
 
-	// First check if they're compatible
-	if !c.IsCompatibleWith(other) {
-		return false
+	// First check prefix
+	if c.prefix != other.prefix {
+		return false, &TaggedUrnError{
+			Code:    ErrorPrefixMismatch,
+			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, other.prefix),
+		}
 	}
 
-	return c.Specificity() > other.Specificity()
+	// Then check if they're compatible
+	compatible, err := c.IsCompatibleWith(other)
+	if err != nil {
+		return false, err
+	}
+	if !compatible {
+		return false, nil
+	}
+
+	return c.Specificity() > other.Specificity(), nil
 }
 
-// IsCompatibleWith checks if this cap is compatible with another
+// IsCompatibleWith checks if this URN is compatible with another
 //
-// Two caps are compatible if they can potentially match
+// Two URNs are compatible if they have the same prefix and can potentially match
 // the same types of requests (considering wildcards and missing tags as wildcards)
-func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) bool {
+func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) (bool, error) {
 	if other == nil {
-		return true
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot check compatibility with nil URN",
+		}
 	}
 
-	// Get all unique tag keys from both caps
+	// First check prefix
+	if c.prefix != other.prefix {
+		return false, &TaggedUrnError{
+			Code:    ErrorPrefixMismatch,
+			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, other.prefix),
+		}
+	}
+
+	// Get all unique tag keys from both URNs
 	allKeys := make(map[string]bool)
 	for key := range c.tags {
 		allKeys[key] = true
@@ -455,16 +518,16 @@ func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) bool {
 		if exists1 && exists2 {
 			// Both have the tag - they must match or one must be wildcard
 			if v1 != "*" && v2 != "*" && v1 != v2 {
-				return false
+				return false, nil
 			}
 		}
 		// If only one has the tag, it's compatible (missing tag is wildcard)
 	}
 
-	return true
+	return true, nil
 }
 
-// WithWildcardTag returns a new cap with a specific tag set to wildcard
+// WithWildcardTag returns a new URN with a specific tag set to wildcard
 func (c *TaggedUrn) WithWildcardTag(key string) *TaggedUrn {
 	if _, exists := c.tags[key]; exists {
 		return c.WithTag(key, "*")
@@ -472,7 +535,7 @@ func (c *TaggedUrn) WithWildcardTag(key string) *TaggedUrn {
 	return c
 }
 
-// Subset returns a new cap with only specified tags
+// Subset returns a new URN with only specified tags
 func (c *TaggedUrn) Subset(keys []string) *TaggedUrn {
 	newTags := make(map[string]string)
 	for _, key := range keys {
@@ -480,11 +543,26 @@ func (c *TaggedUrn) Subset(keys []string) *TaggedUrn {
 			newTags[key] = value
 		}
 	}
-	return &TaggedUrn{tags: newTags}
+	return &TaggedUrn{prefix: c.prefix, tags: newTags}
 }
 
-// Merge returns a new cap merged with another (other takes precedence for conflicts)
-func (c *TaggedUrn) Merge(other *TaggedUrn) *TaggedUrn {
+// Merge returns a new URN merged with another (other takes precedence for conflicts)
+// Both must have the same prefix
+func (c *TaggedUrn) Merge(other *TaggedUrn) (*TaggedUrn, error) {
+	if other == nil {
+		return nil, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot merge with nil URN",
+		}
+	}
+
+	if c.prefix != other.prefix {
+		return nil, &TaggedUrnError{
+			Code:    ErrorPrefixMismatch,
+			Message: fmt.Sprintf("cannot merge URNs with different prefixes: '%s' vs '%s'", c.prefix, other.prefix),
+		}
+	}
+
 	newTags := make(map[string]string)
 	for k, v := range c.tags {
 		newTags[k] = v
@@ -492,17 +570,17 @@ func (c *TaggedUrn) Merge(other *TaggedUrn) *TaggedUrn {
 	for k, v := range other.tags {
 		newTags[k] = v
 	}
-	return &TaggedUrn{tags: newTags}
+	return &TaggedUrn{prefix: c.prefix, tags: newTags}, nil
 }
 
 // ToString returns the canonical string representation of this tagged URN
-// Always includes "cap:" prefix
+// Uses the stored prefix
 // Tags are sorted alphabetically for consistent representation
 // No trailing semicolon in canonical form
 // Values are quoted only when necessary (smart quoting)
 func (c *TaggedUrn) ToString() string {
 	if len(c.tags) == 0 {
-		return "cap:"
+		return fmt.Sprintf("%s:", c.prefix)
 	}
 
 	// Sort keys for canonical representation
@@ -524,7 +602,7 @@ func (c *TaggedUrn) ToString() string {
 	}
 
 	tagsStr := strings.Join(parts, ";")
-	return fmt.Sprintf("cap:%s", tagsStr)
+	return fmt.Sprintf("%s:%s", c.prefix, tagsStr)
 }
 
 // String implements the Stringer interface
@@ -535,6 +613,10 @@ func (c *TaggedUrn) String() string {
 // Equals checks if this tagged URN is equal to another
 func (c *TaggedUrn) Equals(other *TaggedUrn) bool {
 	if other == nil {
+		return false
+	}
+
+	if c.prefix != other.prefix {
 		return false
 	}
 
@@ -578,38 +660,49 @@ func (c *TaggedUrn) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	c.prefix = taggedUrn.prefix
 	c.tags = taggedUrn.tags
 	return nil
 }
 
-// CapMatcher provides utility methods for matching caps
+// CapMatcher provides utility methods for matching URNs
 type CapMatcher struct{}
 
-// FindBestMatch finds the most specific cap that can handle a request
-func (m *CapMatcher) FindBestMatch(caps []*TaggedUrn, request *TaggedUrn) *TaggedUrn {
+// FindBestMatch finds the most specific URN that can handle a request
+// All URNs must have the same prefix as the request
+func (m *CapMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*TaggedUrn, error) {
 	var best *TaggedUrn
 	bestSpecificity := -1
 
-	for _, cap := range caps {
-		if cap.CanHandle(request) {
-			specificity := cap.Specificity()
+	for _, urn := range urns {
+		canHandle, err := urn.CanHandle(request)
+		if err != nil {
+			return nil, err
+		}
+		if canHandle {
+			specificity := urn.Specificity()
 			if specificity > bestSpecificity {
-				best = cap
+				best = urn
 				bestSpecificity = specificity
 			}
 		}
 	}
 
-	return best
+	return best, nil
 }
 
-// FindAllMatches finds all caps that can handle a request, sorted by specificity
-func (m *CapMatcher) FindAllMatches(caps []*TaggedUrn, request *TaggedUrn) []*TaggedUrn {
+// FindAllMatches finds all URNs that can handle a request, sorted by specificity
+// All URNs must have the same prefix as the request
+func (m *CapMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*TaggedUrn, error) {
 	var matches []*TaggedUrn
 
-	for _, cap := range caps {
-		if cap.CanHandle(request) {
-			matches = append(matches, cap)
+	for _, urn := range urns {
+		canHandle, err := urn.CanHandle(request)
+		if err != nil {
+			return nil, err
+		}
+		if canHandle {
+			matches = append(matches, urn)
 		}
 	}
 
@@ -618,30 +711,37 @@ func (m *CapMatcher) FindAllMatches(caps []*TaggedUrn, request *TaggedUrn) []*Ta
 		return matches[i].Specificity() > matches[j].Specificity()
 	})
 
-	return matches
+	return matches, nil
 }
 
-// AreCompatible checks if two cap sets are compatible
-func (m *CapMatcher) AreCompatible(caps1, caps2 []*TaggedUrn) bool {
-	for _, c1 := range caps1 {
-		for _, c2 := range caps2 {
-			if c1.IsCompatibleWith(c2) {
-				return true
+// AreCompatible checks if two URN sets are compatible
+// All URNs in both sets must have the same prefix
+func (m *CapMatcher) AreCompatible(urns1, urns2 []*TaggedUrn) (bool, error) {
+	for _, u1 := range urns1 {
+		for _, u2 := range urns2 {
+			compatible, err := u1.IsCompatibleWith(u2)
+			if err != nil {
+				return false, err
+			}
+			if compatible {
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 // TaggedUrnBuilder provides a fluent builder interface for creating tagged URNs
 type TaggedUrnBuilder struct {
-	tags map[string]string
+	prefix string
+	tags   map[string]string
 }
 
-// NewTaggedUrnBuilder creates a new builder
-func NewTaggedUrnBuilder() *TaggedUrnBuilder {
+// NewTaggedUrnBuilder creates a new builder with a specified prefix (required)
+func NewTaggedUrnBuilder(prefix string) *TaggedUrnBuilder {
 	return &TaggedUrnBuilder{
-		tags: make(map[string]string),
+		prefix: strings.ToLower(prefix),
+		tags:   make(map[string]string),
 	}
 }
 
@@ -661,5 +761,10 @@ func (b *TaggedUrnBuilder) Build() (*TaggedUrn, error) {
 		}
 	}
 
-	return &TaggedUrn{tags: b.tags}, nil
+	return &TaggedUrn{prefix: b.prefix, tags: b.tags}, nil
+}
+
+// BuildAllowEmpty creates the final TaggedUrn, allowing empty tags
+func (b *TaggedUrnBuilder) BuildAllowEmpty() *TaggedUrn {
+	return &TaggedUrn{prefix: b.prefix, tags: b.tags}
 }
