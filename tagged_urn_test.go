@@ -418,8 +418,8 @@ func TestEqualityDifferentPrefix(t *testing.T) {
 	assert.False(t, urn1.Equals(urn2))
 }
 
-func TestCapMatcher(t *testing.T) {
-	matcher := &CapMatcher{}
+func TestUrnMatcher(t *testing.T) {
+	matcher := &UrnMatcher{}
 
 	urns := []*TaggedUrn{}
 
@@ -446,8 +446,8 @@ func TestCapMatcher(t *testing.T) {
 	assert.Equal(t, "cap:ext=pdf;op=generate", best.ToString())
 }
 
-func TestCapMatcherPrefixMismatch(t *testing.T) {
-	matcher := &CapMatcher{}
+func TestUrnMatcherPrefixMismatch(t *testing.T) {
+	matcher := &UrnMatcher{}
 
 	urns := []*TaggedUrn{}
 

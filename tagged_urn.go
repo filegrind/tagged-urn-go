@@ -665,12 +665,12 @@ func (c *TaggedUrn) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// CapMatcher provides utility methods for matching URNs
-type CapMatcher struct{}
+// UrnMatcher provides utility methods for matching URNs
+type UrnMatcher struct{}
 
 // FindBestMatch finds the most specific URN that can handle a request
 // All URNs must have the same prefix as the request
-func (m *CapMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*TaggedUrn, error) {
+func (m *UrnMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*TaggedUrn, error) {
 	var best *TaggedUrn
 	bestSpecificity := -1
 
@@ -693,7 +693,7 @@ func (m *CapMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*Tagg
 
 // FindAllMatches finds all URNs that can handle a request, sorted by specificity
 // All URNs must have the same prefix as the request
-func (m *CapMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*TaggedUrn, error) {
+func (m *UrnMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*TaggedUrn, error) {
 	var matches []*TaggedUrn
 
 	for _, urn := range urns {
@@ -716,7 +716,7 @@ func (m *CapMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*T
 
 // AreCompatible checks if two URN sets are compatible
 // All URNs in both sets must have the same prefix
-func (m *CapMatcher) AreCompatible(urns1, urns2 []*TaggedUrn) (bool, error) {
+func (m *UrnMatcher) AreCompatible(urns1, urns2 []*TaggedUrn) (bool, error) {
 	for _, u1 := range urns1 {
 		for _, u2 := range urns2 {
 			compatible, err := u1.IsCompatibleWith(u2)
