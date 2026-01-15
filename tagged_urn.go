@@ -1,6 +1,6 @@
 // Package capns provides the fundamental tagged URN system with flat tag-based
 // naming, wildcard support, and specificity comparison.
-package capns
+package taggedurn
 
 import (
 	"crypto/sha256"
@@ -347,6 +347,15 @@ func (c *TaggedUrn) GetPrefix() string {
 func (c *TaggedUrn) GetTag(key string) (string, bool) {
 	value, exists := c.tags[strings.ToLower(key)]
 	return value, exists
+}
+
+// AllTags returns a copy of all tags in this URN
+func (c *TaggedUrn) AllTags() map[string]string {
+	result := make(map[string]string, len(c.tags))
+	for k, v := range c.tags {
+		result[k] = v
+	}
+	return result
 }
 
 // HasTag checks if this URN has a specific tag with a specific value
