@@ -1012,13 +1012,13 @@ func TestMatchingSemantics_Test6_ValueMismatch(t *testing.T) {
 
 func TestMatchingSemantics_Test7_FallbackPattern(t *testing.T) {
 	// Test 7: Fallback pattern
-	// URN:     cap:op=generate_thumbnail;out=media:type=binary;v=1
-	// Request: cap:op=generate_thumbnail;out=media:type=binary;v=1;ext=wav
+	// URN:     cap:op=generate_thumbnail;out="media:type=binary;v=1"
+	// Request: cap:op=generate_thumbnail;out="media:type=binary;v=1";ext=wav
 	// Result:  MATCH (URN has implicit ext=*)
-	urn, err := NewTaggedUrnFromString("cap:op=generate_thumbnail;out=media:type=binary;v=1")
+	urn, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:type=binary;v=1"`)
 	require.NoError(t, err)
 
-	request, err := NewTaggedUrnFromString("cap:op=generate_thumbnail;out=media:type=binary;v=1;ext=wav")
+	request, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:type=binary;v=1";ext=wav`)
 	require.NoError(t, err)
 
 	matches, err := urn.Matches(request)
