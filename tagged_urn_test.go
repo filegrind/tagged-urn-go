@@ -149,12 +149,16 @@ func TestInvalidTaggedUrn(t *testing.T) {
 	assert.Equal(t, ErrorInvalidFormat, err.(*TaggedUrnError).Code)
 }
 
-func TestInvalidTagFormat(t *testing.T) {
-	taggedUrn, err := NewTaggedUrnFromString("cap:invalid_tag")
+func TestValuelessTagParsing(t *testing.T) {
+	// Value-less tag is now valid and treated as wildcard
+	taggedUrn, err := NewTaggedUrnFromString("cap:optimize")
 
-	assert.Nil(t, taggedUrn)
-	assert.Error(t, err)
-	assert.Equal(t, ErrorInvalidTagFormat, err.(*TaggedUrnError).Code)
+	assert.NotNil(t, taggedUrn)
+	assert.NoError(t, err)
+	value, exists := taggedUrn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", value)
+	assert.Equal(t, "cap:optimize", taggedUrn.ToString())
 }
 
 func TestInvalidCharacters(t *testing.T) {
@@ -342,7 +346,8 @@ func TestWildcardTag(t *testing.T) {
 
 	wildcarded := urn.WithWildcardTag("ext")
 
-	assert.Equal(t, "cap:ext=*", wildcarded.ToString())
+	// Wildcard serializes as value-less tag
+	assert.Equal(t, "cap:ext", wildcarded.ToString())
 
 	// Test that wildcarded URN can match more requests
 	request, err := NewTaggedUrnFromString("cap:ext=jpg")
@@ -351,7 +356,7 @@ func TestWildcardTag(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, matches)
 
-	wildcardRequest, err := NewTaggedUrnFromString("cap:ext=*")
+	wildcardRequest, err := NewTaggedUrnFromString("cap:ext")
 	require.NoError(t, err)
 	matches, err = wildcarded.Matches(wildcardRequest)
 	require.NoError(t, err)
@@ -1056,4 +1061,238 @@ func TestMatchingSemantics_Test9_CrossDimensionIndependence(t *testing.T) {
 	matches, err := urn.Matches(request)
 	require.NoError(t, err)
 	assert.True(t, matches, "Test 9: Cross-dimension independence should match")
+}
+
+// ============================================================================
+// VALUE-LESS TAG TESTS
+// Value-less tags are equivalent to wildcard tags (key=*)
+// ============================================================================
+
+func TestValuelessTagParsingSingle(t *testing.T) {
+	// Single value-less tag
+	urn, err := NewTaggedUrnFromString("cap:optimize")
+	require.NoError(t, err)
+
+	value, exists := urn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", value)
+	// Serializes as value-less (no =*)
+	assert.Equal(t, "cap:optimize", urn.ToString())
+}
+
+func TestValuelessTagParsingMultiple(t *testing.T) {
+	// Multiple value-less tags
+	urn, err := NewTaggedUrnFromString("cap:fast;optimize;secure")
+	require.NoError(t, err)
+
+	fast, exists := urn.GetTag("fast")
+	assert.True(t, exists)
+	assert.Equal(t, "*", fast)
+
+	optimize, exists := urn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", optimize)
+
+	secure, exists := urn.GetTag("secure")
+	assert.True(t, exists)
+	assert.Equal(t, "*", secure)
+
+	// Serializes alphabetically as value-less
+	assert.Equal(t, "cap:fast;optimize;secure", urn.ToString())
+}
+
+func TestValuelessTagMixedWithValued(t *testing.T) {
+	// Mix of value-less and valued tags
+	urn, err := NewTaggedUrnFromString("cap:op=generate;optimize;ext=pdf;secure")
+	require.NoError(t, err)
+
+	op, exists := urn.GetTag("op")
+	assert.True(t, exists)
+	assert.Equal(t, "generate", op)
+
+	optimize, exists := urn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", optimize)
+
+	ext, exists := urn.GetTag("ext")
+	assert.True(t, exists)
+	assert.Equal(t, "pdf", ext)
+
+	secure, exists := urn.GetTag("secure")
+	assert.True(t, exists)
+	assert.Equal(t, "*", secure)
+
+	// Serializes alphabetically
+	assert.Equal(t, "cap:ext=pdf;op=generate;optimize;secure", urn.ToString())
+}
+
+func TestValuelessTagAtEnd(t *testing.T) {
+	// Value-less tag at the end (no trailing semicolon)
+	urn, err := NewTaggedUrnFromString("cap:op=generate;optimize")
+	require.NoError(t, err)
+
+	op, exists := urn.GetTag("op")
+	assert.True(t, exists)
+	assert.Equal(t, "generate", op)
+
+	optimize, exists := urn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", optimize)
+
+	assert.Equal(t, "cap:op=generate;optimize", urn.ToString())
+}
+
+func TestValuelessTagEquivalenceToWildcard(t *testing.T) {
+	// Value-less tag is equivalent to explicit wildcard
+	valueless, err := NewTaggedUrnFromString("cap:ext")
+	require.NoError(t, err)
+
+	wildcard, err := NewTaggedUrnFromString("cap:ext=*")
+	require.NoError(t, err)
+
+	assert.True(t, valueless.Equals(wildcard))
+	// Both serialize to value-less form
+	assert.Equal(t, "cap:ext", valueless.ToString())
+	assert.Equal(t, "cap:ext", wildcard.ToString())
+}
+
+func TestValuelessTagMatching(t *testing.T) {
+	// Value-less tag (wildcard) matches any value
+	urn, err := NewTaggedUrnFromString("cap:op=generate;ext")
+	require.NoError(t, err)
+
+	requestPdf, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	require.NoError(t, err)
+	requestDocx, err := NewTaggedUrnFromString("cap:op=generate;ext=docx")
+	require.NoError(t, err)
+	requestAny, err := NewTaggedUrnFromString("cap:op=generate;ext=anything")
+	require.NoError(t, err)
+
+	matches, err := urn.Matches(requestPdf)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	matches, err = urn.Matches(requestDocx)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	matches, err = urn.Matches(requestAny)
+	require.NoError(t, err)
+	assert.True(t, matches)
+}
+
+func TestValuelessTagInRequest(t *testing.T) {
+	// Request with value-less tag matches any URN value
+	request, err := NewTaggedUrnFromString("cap:op=generate;ext")
+	require.NoError(t, err)
+
+	urnPdf, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	require.NoError(t, err)
+	urnDocx, err := NewTaggedUrnFromString("cap:op=generate;ext=docx")
+	require.NoError(t, err)
+	urnMissing, err := NewTaggedUrnFromString("cap:op=generate")
+	require.NoError(t, err)
+
+	matches, err := urnPdf.Matches(request)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	matches, err = urnDocx.Matches(request)
+	require.NoError(t, err)
+	assert.True(t, matches)
+
+	matches, err = urnMissing.Matches(request)
+	require.NoError(t, err)
+	assert.True(t, matches) // Missing = implicit wildcard
+}
+
+func TestValuelessTagSpecificity(t *testing.T) {
+	// Value-less tags (wildcards) don't count towards specificity
+	urn1, err := NewTaggedUrnFromString("cap:op=generate")
+	require.NoError(t, err)
+	urn2, err := NewTaggedUrnFromString("cap:op=generate;optimize")
+	require.NoError(t, err)
+	urn3, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, urn1.Specificity())
+	assert.Equal(t, 1, urn2.Specificity()) // optimize is wildcard, doesn't count
+	assert.Equal(t, 2, urn3.Specificity())
+}
+
+func TestValuelessTagRoundtrip(t *testing.T) {
+	// Round-trip parsing and serialization
+	original := "cap:ext=pdf;op=generate;optimize;secure"
+	urn, err := NewTaggedUrnFromString(original)
+	require.NoError(t, err)
+	serialized := urn.ToString()
+	reparsed, err := NewTaggedUrnFromString(serialized)
+	require.NoError(t, err)
+	assert.True(t, urn.Equals(reparsed))
+	assert.Equal(t, original, serialized)
+}
+
+func TestValuelessTagCaseNormalization(t *testing.T) {
+	// Value-less tags are normalized to lowercase like other keys
+	urn, err := NewTaggedUrnFromString("cap:OPTIMIZE;Fast;SECURE")
+	require.NoError(t, err)
+
+	optimize, exists := urn.GetTag("optimize")
+	assert.True(t, exists)
+	assert.Equal(t, "*", optimize)
+
+	fast, exists := urn.GetTag("fast")
+	assert.True(t, exists)
+	assert.Equal(t, "*", fast)
+
+	secure, exists := urn.GetTag("secure")
+	assert.True(t, exists)
+	assert.Equal(t, "*", secure)
+
+	assert.Equal(t, "cap:fast;optimize;secure", urn.ToString())
+}
+
+func TestEmptyValueStillError(t *testing.T) {
+	// Empty value with = is still an error (different from value-less)
+	urn, err := NewTaggedUrnFromString("cap:key=")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+
+	urn2, err := NewTaggedUrnFromString("cap:key=;other=value")
+	assert.Nil(t, urn2)
+	assert.Error(t, err)
+}
+
+func TestValuelessTagCompatibility(t *testing.T) {
+	// Value-less tags are compatible with any value
+	urn1, err := NewTaggedUrnFromString("cap:op=generate;ext")
+	require.NoError(t, err)
+	urn2, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	require.NoError(t, err)
+	urn3, err := NewTaggedUrnFromString("cap:op=generate;ext=docx")
+	require.NoError(t, err)
+
+	compatible, err := urn1.IsCompatibleWith(urn2)
+	require.NoError(t, err)
+	assert.True(t, compatible)
+
+	compatible, err = urn1.IsCompatibleWith(urn3)
+	require.NoError(t, err)
+	assert.True(t, compatible)
+
+	// But urn2 and urn3 are not compatible (different specific values)
+	compatible, err = urn2.IsCompatibleWith(urn3)
+	require.NoError(t, err)
+	assert.False(t, compatible)
+}
+
+func TestValuelessNumericKeyStillRejected(t *testing.T) {
+	// Purely numeric keys are still rejected for value-less tags
+	urn, err := NewTaggedUrnFromString("cap:123")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+
+	urn2, err := NewTaggedUrnFromString("cap:op=generate;456")
+	assert.Nil(t, urn2)
+	assert.Error(t, err)
 }

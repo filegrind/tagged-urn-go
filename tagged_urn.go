@@ -214,6 +214,19 @@ func NewTaggedUrnFromString(s string) (*TaggedUrn, error) {
 					}
 				}
 				state = stateExpectingValue
+			} else if c == ';' {
+				// Value-less tag: treat as wildcard
+				if currentKey.Len() == 0 {
+					return nil, &TaggedUrnError{
+						Code:    ErrorEmptyTag,
+						Message: "empty key",
+					}
+				}
+				currentValue.WriteString("*")
+				if err := finishTag(); err != nil {
+					return nil, err
+				}
+				state = stateExpectingKey
 			} else if isValidKeyChar(c) {
 				currentKey.WriteRune(unicode.ToLower(c))
 			} else {
@@ -308,9 +321,16 @@ func NewTaggedUrnFromString(s string) (*TaggedUrn, error) {
 			Message: fmt.Sprintf("unterminated quote at position %d", pos),
 		}
 	case stateInKey:
-		return nil, &TaggedUrnError{
-			Code:    ErrorInvalidTagFormat,
-			Message: fmt.Sprintf("incomplete tag '%s'", currentKey.String()),
+		// Value-less tag at end: treat as wildcard
+		if currentKey.Len() == 0 {
+			return nil, &TaggedUrnError{
+				Code:    ErrorEmptyTag,
+				Message: "empty key",
+			}
+		}
+		currentValue.WriteString("*")
+		if err := finishTag(); err != nil {
+			return nil, err
 		}
 	case stateExpectingValue:
 		return nil, &TaggedUrnError{
@@ -587,6 +607,7 @@ func (c *TaggedUrn) Merge(other *TaggedUrn) (*TaggedUrn, error) {
 // Tags are sorted alphabetically for consistent representation
 // No trailing semicolon in canonical form
 // Values are quoted only when necessary (smart quoting)
+// Wildcard values (*) are serialized as value-less tags (just the key)
 func (c *TaggedUrn) ToString() string {
 	if len(c.tags) == 0 {
 		return fmt.Sprintf("%s:", c.prefix)
@@ -603,7 +624,10 @@ func (c *TaggedUrn) ToString() string {
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		value := c.tags[key]
-		if needsQuoting(value) {
+		if value == "*" {
+			// Value-less tag: output just the key
+			parts = append(parts, key)
+		} else if needsQuoting(value) {
 			parts = append(parts, fmt.Sprintf("%s=%s", key, quoteValue(value)))
 		} else {
 			parts = append(parts, fmt.Sprintf("%s=%s", key, value))
