@@ -9,7 +9,7 @@ import (
 )
 
 func TestTaggedUrnCreation(t *testing.T) {
-	taggedUrn, err := NewTaggedUrnFromString("cap:op=transform;format=json;type=data_processing")
+	taggedUrn, err := NewTaggedUrnFromString("cap:op=transform;format=json;data_processing")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, taggedUrn)
@@ -406,7 +406,7 @@ func TestEquality(t *testing.T) {
 	urn2, err := NewTaggedUrnFromString("cap:op=generate") // different order
 	require.NoError(t, err)
 
-	urn3, err := NewTaggedUrnFromString("cap:op=generate;type=image")
+	urn3, err := NewTaggedUrnFromString("cap:op=generate;image")
 	require.NoError(t, err)
 
 	assert.True(t, urn1.Equals(urn2)) // order doesn't matter
@@ -1017,13 +1017,13 @@ func TestMatchingSemantics_Test6_ValueMismatch(t *testing.T) {
 
 func TestMatchingSemantics_Test7_FallbackPattern(t *testing.T) {
 	// Test 7: Fallback pattern
-	// URN:     cap:op=generate_thumbnail;out="media:type=binary;v=1"
-	// Request: cap:op=generate_thumbnail;out="media:type=binary;v=1";ext=wav
+	// URN:     cap:op=generate_thumbnail;out="media:binary"
+	// Request: cap:op=generate_thumbnail;out="media:binary";ext=wav
 	// Result:  MATCH (URN has implicit ext=*)
-	urn, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:type=binary;v=1"`)
+	urn, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:binary"`)
 	require.NoError(t, err)
 
-	request, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:type=binary;v=1";ext=wav`)
+	request, err := NewTaggedUrnFromString(`cap:op=generate_thumbnail;out="media:binary";ext=wav`)
 	require.NoError(t, err)
 
 	matches, err := urn.Matches(request)
