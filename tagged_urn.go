@@ -70,7 +70,7 @@ func isValidKeyChar(c rune) bool {
 
 // isValidUnquotedValueChar checks if a character is valid for an unquoted value
 func isValidUnquotedValueChar(c rune) bool {
-	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_' || c == '-' || c == '/' || c == ':' || c == '.' || c == '*'
+	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_' || c == '-' || c == '/' || c == ':' || c == '.' || c == '*' || c == '?' || c == '!'
 }
 
 // needsQuoting checks if a value needs quoting for serialization
@@ -409,59 +409,135 @@ func (c *TaggedUrn) WithoutTag(key string) *TaggedUrn {
 	return &TaggedUrn{prefix: c.prefix, tags: newTags}
 }
 
-// Matches checks if this URN matches another based on tag compatibility
+// Matches checks if this URN (instance) matches a pattern based on tag compatibility
 //
 // IMPORTANT: Both URNs must have the same prefix. Comparing URNs with
 // different prefixes is a programming error and will return an error.
 //
-// A URN matches a request if:
-// - Both have the same prefix
-// - For each tag in the request: URN has same value, wildcard (*), or missing tag
-// - For each tag in the URN: if request is missing that tag, that's fine (URN is more specific)
-// Missing tags are treated as wildcards (less specific, can handle any value).
-func (c *TaggedUrn) Matches(request *TaggedUrn) (bool, error) {
-	if request == nil {
+// Per-tag matching semantics:
+// | Pattern Form | Interpretation              | Instance Missing | Instance = v | Instance = x≠v |
+// |--------------|-----------------------------|--------------------|--------------|----------------|
+// | (no entry)   | no constraint               | ✅ match           | ✅ match     | ✅ match       |
+// | K=?          | no constraint (explicit)    | ✅                 | ✅           | ✅             |
+// | K=!          | must-not-have               | ✅                 | ❌           | ❌             |
+// | K=*          | must-have, any value        | ❌                 | ✅           | ✅             |
+// | K=v          | must-have, exact value      | ❌                 | ✅           | ❌             |
+//
+// Special values work symmetrically on both instance and pattern sides.
+func (c *TaggedUrn) Matches(pattern *TaggedUrn) (bool, error) {
+	if pattern == nil {
 		return false, &TaggedUrnError{
 			Code:    ErrorInvalidFormat,
-			Message: "cannot match against nil request",
+			Message: "cannot match against nil pattern",
 		}
 	}
 
 	// First check prefix - must match exactly
-	if c.prefix != request.prefix {
+	if c.prefix != pattern.prefix {
 		return false, &TaggedUrnError{
 			Code:    ErrorPrefixMismatch,
-			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, request.prefix),
+			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, pattern.prefix),
 		}
 	}
 
-	// Check all tags that the request specifies
-	for requestKey, requestValue := range request.tags {
-		urnValue, exists := c.tags[requestKey]
-		if !exists {
-			// Missing tag in URN is treated as wildcard - can handle any value
-			continue
+	// Collect all keys from both instance and pattern
+	allKeys := make(map[string]bool)
+	for key := range c.tags {
+		allKeys[key] = true
+	}
+	for key := range pattern.tags {
+		allKeys[key] = true
+	}
+
+	for key := range allKeys {
+		inst, instExists := c.tags[key]
+		patt, pattExists := pattern.tags[key]
+
+		var instVal, pattVal *string
+		if instExists {
+			instVal = &inst
+		}
+		if pattExists {
+			pattVal = &patt
 		}
 
-		if urnValue == "*" {
-			// URN has wildcard - can handle any value
-			continue
-		}
-
-		if requestValue == "*" {
-			// Request accepts any value - URN's specific value matches
-			continue
-		}
-
-		if urnValue != requestValue {
-			// URN has specific value that doesn't match request's specific value
+		if !valuesMatch(instVal, pattVal) {
 			return false, nil
 		}
 	}
-
-	// If URN has additional specific tags that request doesn't specify, that's fine
-	// The URN is just more specific than needed
 	return true, nil
+}
+
+// valuesMatch checks if instance value matches pattern constraint
+//
+// Full cross-product truth table:
+// | Instance | Pattern | Match? | Reason |
+// |----------|---------|--------|--------|
+// | (none)   | (none)  | ✅     | No constraint either side |
+// | (none)   | K=?     | ✅     | Pattern doesn't care |
+// | (none)   | K=!     | ✅     | Pattern wants absent, it is |
+// | (none)   | K=*     | ❌     | Pattern wants present |
+// | (none)   | K=v     | ❌     | Pattern wants exact value |
+// | K=?      | (any)   | ✅     | Instance doesn't care |
+// | K=!      | (none)  | ✅     | Symmetric: absent |
+// | K=!      | K=?     | ✅     | Pattern doesn't care |
+// | K=!      | K=!     | ✅     | Both want absent |
+// | K=!      | K=*     | ❌     | Conflict: absent vs present |
+// | K=!      | K=v     | ❌     | Conflict: absent vs value |
+// | K=*      | (none)  | ✅     | Pattern has no constraint |
+// | K=*      | K=?     | ✅     | Pattern doesn't care |
+// | K=*      | K=!     | ❌     | Conflict: present vs absent |
+// | K=*      | K=*     | ✅     | Both accept any presence |
+// | K=*      | K=v     | ✅     | Instance accepts any, v is fine |
+// | K=v      | (none)  | ✅     | Pattern has no constraint |
+// | K=v      | K=?     | ✅     | Pattern doesn't care |
+// | K=v      | K=!     | ❌     | Conflict: value vs absent |
+// | K=v      | K=*     | ✅     | Pattern wants any, v satisfies |
+// | K=v      | K=v     | ✅     | Exact match |
+// | K=v      | K=w     | ❌     | Value mismatch (v≠w) |
+func valuesMatch(inst, patt *string) bool {
+	// Pattern has no constraint (no entry or explicit ?)
+	if patt == nil || *patt == "?" {
+		return true
+	}
+
+	// Instance doesn't care (explicit ?)
+	if inst != nil && *inst == "?" {
+		return true
+	}
+
+	// Pattern: must-not-have (!)
+	if *patt == "!" {
+		if inst == nil {
+			return true // Instance absent, pattern wants absent
+		}
+		if *inst == "!" {
+			return true // Both say absent
+		}
+		return false // Instance has value, pattern wants absent
+	}
+
+	// Instance: must-not-have conflicts with pattern wanting value
+	if inst != nil && *inst == "!" {
+		return false // Conflict: absent vs value or present
+	}
+
+	// Pattern: must-have-any (*)
+	if *patt == "*" {
+		if inst == nil {
+			return false // Instance missing, pattern wants present
+		}
+		return true // Instance has value, pattern wants any
+	}
+
+	// Pattern: exact value
+	if inst == nil {
+		return false // Instance missing, pattern wants value
+	}
+	if *inst == "*" {
+		return true // Instance accepts any, pattern's value is fine
+	}
+	return *inst == *patt // Both have values, must match exactly
 }
 
 // CanHandle checks if this URN can handle a request
@@ -471,15 +547,48 @@ func (c *TaggedUrn) CanHandle(request *TaggedUrn) (bool, error) {
 
 // Specificity returns the specificity score for URN matching
 // More specific URNs have higher scores and are preferred
+// Graded scoring:
+// - K=v (exact value): 3 points (most specific)
+// - K=* (must-have-any): 2 points
+// - K=! (must-not-have): 1 point
+// - K=? (unspecified): 0 points (least specific)
 func (c *TaggedUrn) Specificity() int {
-	// Count non-wildcard tags
-	count := 0
+	score := 0
 	for _, value := range c.tags {
-		if value != "*" {
-			count++
+		switch value {
+		case "?":
+			score += 0
+		case "!":
+			score += 1
+		case "*":
+			score += 2
+		default:
+			score += 3 // exact value
 		}
 	}
-	return count
+	return score
+}
+
+// SpecificityTuple returns specificity as a tuple for tie-breaking
+// Returns (exact_count, must_have_any_count, must_not_count)
+// Compare tuples lexicographically when sum scores are equal
+func (c *TaggedUrn) SpecificityTuple() (int, int, int) {
+	exact := 0
+	mustHaveAny := 0
+	mustNot := 0
+	for _, value := range c.tags {
+		switch value {
+		case "?":
+			// 0 points, not counted
+		case "!":
+			mustNot++
+		case "*":
+			mustHaveAny++
+		default:
+			exact++
+		}
+	}
+	return exact, mustHaveAny, mustNot
 }
 
 // IsMoreSpecificThan checks if this URN is more specific than another
@@ -514,7 +623,14 @@ func (c *TaggedUrn) IsMoreSpecificThan(other *TaggedUrn) (bool, error) {
 // IsCompatibleWith checks if this URN is compatible with another
 //
 // Two URNs are compatible if they have the same prefix and can potentially match
-// the same types of requests (considering wildcards and missing tags as wildcards)
+// the same instances (i.e., there exists at least one instance that both patterns accept)
+//
+// Compatibility rules:
+// - K=v and K=w (v≠w): NOT compatible (no instance can match both exact values)
+// - K=! and K=v/K=*: NOT compatible (one requires absent, other requires present)
+// - K=v and K=*: compatible (instance with K=v matches both)
+// - K=? is compatible with anything (no constraint)
+// - Missing entry is compatible with anything (no constraint)
 func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) (bool, error) {
 	if other == nil {
 		return false, &TaggedUrnError{
@@ -544,16 +660,54 @@ func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) (bool, error) {
 		v1, exists1 := c.tags[key]
 		v2, exists2 := other.tags[key]
 
-		if exists1 && exists2 {
-			// Both have the tag - they must match or one must be wildcard
-			if v1 != "*" && v2 != "*" && v1 != v2 {
-				return false, nil
-			}
+		var val1, val2 *string
+		if exists1 {
+			val1 = &v1
 		}
-		// If only one has the tag, it's compatible (missing tag is wildcard)
+		if exists2 {
+			val2 = &v2
+		}
+
+		if !valuesCompatible(val1, val2) {
+			return false, nil
+		}
 	}
 
 	return true, nil
+}
+
+// valuesCompatible checks if two pattern values are compatible (could match the same instance)
+func valuesCompatible(v1, v2 *string) bool {
+	// Either missing or ? means no constraint - compatible with anything
+	if v1 == nil || v2 == nil {
+		return true
+	}
+	if *v1 == "?" || *v2 == "?" {
+		return true
+	}
+
+	// Both are ! - compatible (both want absent)
+	if *v1 == "!" && *v2 == "!" {
+		return true
+	}
+
+	// One is ! and other is value or * - NOT compatible
+	if *v1 == "!" || *v2 == "!" {
+		return false
+	}
+
+	// Both are * - compatible
+	if *v1 == "*" && *v2 == "*" {
+		return true
+	}
+
+	// One is * and other is value - compatible (value matches *)
+	if *v1 == "*" || *v2 == "*" {
+		return true
+	}
+
+	// Both are specific values - must be equal
+	return *v1 == *v2
 }
 
 // WithWildcardTag returns a new URN with a specific tag set to wildcard
@@ -607,7 +761,10 @@ func (c *TaggedUrn) Merge(other *TaggedUrn) (*TaggedUrn, error) {
 // Tags are sorted alphabetically for consistent representation
 // No trailing semicolon in canonical form
 // Values are quoted only when necessary (smart quoting)
-// Wildcard values (*) are serialized as value-less tags (just the key)
+// Special value serialization:
+// - * (must-have-any): serialized as value-less tag (just the key)
+// - ? (unspecified): serialized as key=?
+// - ! (must-not-have): serialized as key=!
 func (c *TaggedUrn) ToString() string {
 	if len(c.tags) == 0 {
 		return fmt.Sprintf("%s:", c.prefix)
@@ -624,13 +781,22 @@ func (c *TaggedUrn) ToString() string {
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
 		value := c.tags[key]
-		if value == "*" {
-			// Value-less tag: output just the key
+		switch value {
+		case "*":
+			// Valueless sugar: key
 			parts = append(parts, key)
-		} else if needsQuoting(value) {
-			parts = append(parts, fmt.Sprintf("%s=%s", key, quoteValue(value)))
-		} else {
-			parts = append(parts, fmt.Sprintf("%s=%s", key, value))
+		case "?":
+			// Explicit: key=?
+			parts = append(parts, fmt.Sprintf("%s=?", key))
+		case "!":
+			// Explicit: key=!
+			parts = append(parts, fmt.Sprintf("%s=!", key))
+		default:
+			if needsQuoting(value) {
+				parts = append(parts, fmt.Sprintf("%s=%s", key, quoteValue(value)))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=%s", key, value))
+			}
 		}
 	}
 
