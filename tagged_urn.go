@@ -1,5 +1,18 @@
-// Package capns provides the fundamental tagged URN system with flat tag-based
-// naming, wildcard support, and specificity comparison.
+// Package taggedurn provides the fundamental tagged URN system with flat tag-based
+// naming, pattern matching, and graded specificity comparison.
+//
+// Special pattern values:
+//   - K=v: Must have key K with exact value v
+//   - K=*: Must have key K with any value (presence required)
+//   - K=!: Must NOT have key K (absence required)
+//   - K=?: No constraint on key K (explicit don't-care)
+//   - (missing): Same as K=? - no constraint
+//
+// Graded specificity scoring:
+//   - Exact value (K=v): 3 points
+//   - Must-have-any (K=*): 2 points
+//   - Must-not-have (K=!): 1 point
+//   - Unspecified (K=?) or missing: 0 points
 package taggedurn
 
 import (
@@ -12,12 +25,12 @@ import (
 	"unicode"
 )
 
-// TaggedUrn represents a tagged URN using flat, ordered tags with a configurable prefix
+// TaggedUrn represents a tagged URN using flat, ordered tags with a configurable prefix.
 //
 // Examples:
-// - cap:op=generate;ext=pdf;out=binary;target=thumbnail
-// - myapp:key="Value With Spaces"
-// - custom:a=1;b=2
+//   - cap:op=generate;ext=pdf;out=binary;target=thumbnail
+//   - cap:format=*;debug=!  (format required, debug forbidden)
+//   - myapp:key="Value With Spaces"
 type TaggedUrn struct {
 	prefix string
 	tags   map[string]string
@@ -417,11 +430,11 @@ func (c *TaggedUrn) WithoutTag(key string) *TaggedUrn {
 // Per-tag matching semantics:
 // | Pattern Form | Interpretation              | Instance Missing | Instance = v | Instance = x≠v |
 // |--------------|-----------------------------|--------------------|--------------|----------------|
-// | (no entry)   | no constraint               | ✅ match           | ✅ match     | ✅ match       |
-// | K=?          | no constraint (explicit)    | ✅                 | ✅           | ✅             |
-// | K=!          | must-not-have               | ✅                 | ❌           | ❌             |
-// | K=*          | must-have, any value        | ❌                 | ✅           | ✅             |
-// | K=v          | must-have, exact value      | ❌                 | ✅           | ❌             |
+// | (no entry)   | no constraint               | OK match           | OK match     | OK match       |
+// | K=?          | no constraint (explicit)    | OK                 | OK           | OK             |
+// | K=!          | must-not-have               | OK                 | NO           | NO             |
+// | K=*          | must-have, any value        | NO                 | OK           | OK             |
+// | K=v          | must-have, exact value      | NO                 | OK           | NO             |
 //
 // Special values work symmetrically on both instance and pattern sides.
 func (c *TaggedUrn) Matches(pattern *TaggedUrn) (bool, error) {
@@ -473,28 +486,28 @@ func (c *TaggedUrn) Matches(pattern *TaggedUrn) (bool, error) {
 // Full cross-product truth table:
 // | Instance | Pattern | Match? | Reason |
 // |----------|---------|--------|--------|
-// | (none)   | (none)  | ✅     | No constraint either side |
-// | (none)   | K=?     | ✅     | Pattern doesn't care |
-// | (none)   | K=!     | ✅     | Pattern wants absent, it is |
-// | (none)   | K=*     | ❌     | Pattern wants present |
-// | (none)   | K=v     | ❌     | Pattern wants exact value |
-// | K=?      | (any)   | ✅     | Instance doesn't care |
-// | K=!      | (none)  | ✅     | Symmetric: absent |
-// | K=!      | K=?     | ✅     | Pattern doesn't care |
-// | K=!      | K=!     | ✅     | Both want absent |
-// | K=!      | K=*     | ❌     | Conflict: absent vs present |
-// | K=!      | K=v     | ❌     | Conflict: absent vs value |
-// | K=*      | (none)  | ✅     | Pattern has no constraint |
-// | K=*      | K=?     | ✅     | Pattern doesn't care |
-// | K=*      | K=!     | ❌     | Conflict: present vs absent |
-// | K=*      | K=*     | ✅     | Both accept any presence |
-// | K=*      | K=v     | ✅     | Instance accepts any, v is fine |
-// | K=v      | (none)  | ✅     | Pattern has no constraint |
-// | K=v      | K=?     | ✅     | Pattern doesn't care |
-// | K=v      | K=!     | ❌     | Conflict: value vs absent |
-// | K=v      | K=*     | ✅     | Pattern wants any, v satisfies |
-// | K=v      | K=v     | ✅     | Exact match |
-// | K=v      | K=w     | ❌     | Value mismatch (v≠w) |
+// | (none)   | (none)  | OK     | No constraint either side |
+// | (none)   | K=?     | OK     | Pattern doesn't care |
+// | (none)   | K=!     | OK     | Pattern wants absent, it is |
+// | (none)   | K=*     | NO     | Pattern wants present |
+// | (none)   | K=v     | NO     | Pattern wants exact value |
+// | K=?      | (any)   | OK     | Instance doesn't care |
+// | K=!      | (none)  | OK     | Symmetric: absent |
+// | K=!      | K=?     | OK     | Pattern doesn't care |
+// | K=!      | K=!     | OK     | Both want absent |
+// | K=!      | K=*     | NO     | Conflict: absent vs present |
+// | K=!      | K=v     | NO     | Conflict: absent vs value |
+// | K=*      | (none)  | OK     | Pattern has no constraint |
+// | K=*      | K=?     | OK     | Pattern doesn't care |
+// | K=*      | K=!     | NO     | Conflict: present vs absent |
+// | K=*      | K=*     | OK     | Both accept any presence |
+// | K=*      | K=v     | OK     | Instance accepts any, v is fine |
+// | K=v      | (none)  | OK     | Pattern has no constraint |
+// | K=v      | K=?     | OK     | Pattern doesn't care |
+// | K=v      | K=!     | NO     | Conflict: value vs absent |
+// | K=v      | K=*     | OK     | Pattern wants any, v satisfies |
+// | K=v      | K=v     | OK     | Exact match |
+// | K=v      | K=w     | NO     | Value mismatch (v≠w) |
 func valuesMatch(inst, patt *string) bool {
 	// Pattern has no constraint (no entry or explicit ?)
 	if patt == nil || *patt == "?" {
