@@ -1,4 +1,4 @@
-module github.com/fgrnd/tagged-urn-go
+module github.com/filegrind/tagged-urn-go
 
 go 1.21
 
