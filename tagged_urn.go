@@ -59,6 +59,7 @@ const (
 	ErrorInvalidEscapeSequence = 9
 	ErrorEmptyPrefix           = 10
 	ErrorPrefixMismatch        = 11
+	ErrorWhitespaceInInput     = 12
 )
 
 // Parser states for state machine
@@ -122,6 +123,14 @@ func quoteValue(value string) string {
 // - Unquoted values: Normalized to lowercase
 // - Quoted values: Case preserved exactly as specified
 func NewTaggedUrnFromString(s string) (*TaggedUrn, error) {
+	// Fail hard on leading/trailing whitespace
+	if s != strings.TrimSpace(s) {
+		return nil, &TaggedUrnError{
+			Code:    ErrorWhitespaceInInput,
+			Message: fmt.Sprintf("tagged URN has leading or trailing whitespace: '%s'", s),
+		}
+	}
+
 	if s == "" {
 		return nil, &TaggedUrnError{
 			Code:    ErrorInvalidFormat,

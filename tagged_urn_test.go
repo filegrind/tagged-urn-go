@@ -1411,6 +1411,49 @@ func TestValuelessNumericKeyStillRejected(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestWhitespaceInInputRejected(t *testing.T) {
+	// Leading whitespace fails hard
+	urn, err := NewTaggedUrnFromString(" cap:op=test")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+	urnError, ok := err.(*TaggedUrnError)
+	assert.True(t, ok)
+	assert.Equal(t, ErrorWhitespaceInInput, urnError.Code)
+
+	// Trailing whitespace fails hard
+	urn, err = NewTaggedUrnFromString("cap:op=test ")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+	urnError, ok = err.(*TaggedUrnError)
+	assert.True(t, ok)
+	assert.Equal(t, ErrorWhitespaceInInput, urnError.Code)
+
+	// Both leading and trailing whitespace fails hard
+	urn, err = NewTaggedUrnFromString(" cap:op=test ")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+	urnError, ok = err.(*TaggedUrnError)
+	assert.True(t, ok)
+	assert.Equal(t, ErrorWhitespaceInInput, urnError.Code)
+
+	// Tab and newline also count as whitespace
+	urn, err = NewTaggedUrnFromString("\tcap:op=test")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+
+	urn, err = NewTaggedUrnFromString("cap:op=test\n")
+	assert.Nil(t, urn)
+	assert.Error(t, err)
+
+	// Clean input works
+	urn, err = NewTaggedUrnFromString("cap:op=test")
+	assert.NoError(t, err)
+	assert.NotNil(t, urn)
+	value, exists := urn.GetTag("op")
+	assert.True(t, exists)
+	assert.Equal(t, "test", value)
+}
+
 // ============================================================================
 // NEW SEMANTICS TESTS: ? (unspecified) and ! (must-not-have)
 // ============================================================================
