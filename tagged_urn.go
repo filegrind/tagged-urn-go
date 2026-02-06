@@ -492,14 +492,14 @@ func (c *TaggedUrn) Matches(pattern *TaggedUrn) (bool, error) {
 
 // valuesMatch checks if instance value matches pattern constraint
 //
-// Full cross-product truth table:
+// Full cross-product truth table (instance = cap, pattern = request):
 // | Instance | Pattern | Match? | Reason |
 // |----------|---------|--------|--------|
 // | (none)   | (none)  | OK     | No constraint either side |
 // | (none)   | K=?     | OK     | Pattern doesn't care |
 // | (none)   | K=!     | OK     | Pattern wants absent, it is |
 // | (none)   | K=*     | NO     | Pattern wants present |
-// | (none)   | K=v     | NO     | Pattern wants exact value |
+// | (none)   | K=v     | OK     | Instance missing = wildcard (Rust semantics) |
 // | K=?      | (any)   | OK     | Instance doesn't care |
 // | K=!      | (none)  | OK     | Symmetric: absent |
 // | K=!      | K=?     | OK     | Pattern doesn't care |
@@ -554,7 +554,9 @@ func valuesMatch(inst, patt *string) bool {
 
 	// Pattern: exact value
 	if inst == nil {
-		return false // Instance missing, pattern wants value
+		// Instance (cap) missing tag → treated as wildcard → MATCH
+		// This matches Rust semantics: missing tag in cap = can handle any value for that tag
+		return true
 	}
 	if *inst == "*" {
 		return true // Instance accepts any, pattern's value is fine
