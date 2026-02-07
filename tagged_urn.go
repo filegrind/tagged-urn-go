@@ -446,34 +446,51 @@ func (c *TaggedUrn) WithoutTag(key string) *TaggedUrn {
 // | K=v          | must-have, exact value      | NO                 | OK           | NO             |
 //
 // Special values work symmetrically on both instance and pattern sides.
-func (c *TaggedUrn) Matches(pattern *TaggedUrn) (bool, error) {
+//
+// ConformsTo checks if this URN (instance) satisfies the pattern's constraints.
+// Equivalent to pattern.Accepts(self).
+func (c *TaggedUrn) ConformsTo(pattern *TaggedUrn) (bool, error) {
 	if pattern == nil {
 		return false, &TaggedUrnError{
 			Code:    ErrorInvalidFormat,
 			Message: "cannot match against nil pattern",
 		}
 	}
+	return checkMatch(c.tags, c.prefix, pattern.tags, pattern.prefix)
+}
 
-	// First check prefix - must match exactly
-	if c.prefix != pattern.prefix {
+// Accepts checks if this URN (pattern) accepts the given instance.
+// Equivalent to instance.ConformsTo(self).
+func (c *TaggedUrn) Accepts(instance *TaggedUrn) (bool, error) {
+	if instance == nil {
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot match against nil instance",
+		}
+	}
+	return checkMatch(instance.tags, instance.prefix, c.tags, c.prefix)
+}
+
+// checkMatch is the core matching: does instance satisfy pattern's constraints?
+func checkMatch(instanceTags map[string]string, instancePrefix string, patternTags map[string]string, patternPrefix string) (bool, error) {
+	if instancePrefix != patternPrefix {
 		return false, &TaggedUrnError{
 			Code:    ErrorPrefixMismatch,
-			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, pattern.prefix),
+			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", instancePrefix, patternPrefix),
 		}
 	}
 
-	// Collect all keys from both instance and pattern
 	allKeys := make(map[string]bool)
-	for key := range c.tags {
+	for key := range instanceTags {
 		allKeys[key] = true
 	}
-	for key := range pattern.tags {
+	for key := range patternTags {
 		allKeys[key] = true
 	}
 
 	for key := range allKeys {
-		inst, instExists := c.tags[key]
-		patt, pattExists := pattern.tags[key]
+		inst, instExists := instanceTags[key]
+		patt, pattExists := patternTags[key]
 
 		var instVal, pattVal *string
 		if instExists {
@@ -554,9 +571,7 @@ func valuesMatch(inst, patt *string) bool {
 
 	// Pattern: exact value
 	if inst == nil {
-		// Instance (cap) missing tag → treated as wildcard → MATCH
-		// This matches Rust semantics: missing tag in cap = can handle any value for that tag
-		return true
+		return false // Instance missing, pattern wants exact value
 	}
 	if *inst == "*" {
 		return true // Instance accepts any, pattern's value is fine
@@ -564,9 +579,22 @@ func valuesMatch(inst, patt *string) bool {
 	return *inst == *patt // Both have values, must match exactly
 }
 
-// CanHandle checks if this URN can handle a request
-func (c *TaggedUrn) CanHandle(request *TaggedUrn) (bool, error) {
-	return c.Matches(request)
+// ConformsToStr checks if this URN (instance) satisfies a string pattern's constraints.
+func (c *TaggedUrn) ConformsToStr(patternStr string) (bool, error) {
+	pattern, err := NewTaggedUrnFromString(patternStr)
+	if err != nil {
+		return false, err
+	}
+	return c.ConformsTo(pattern)
+}
+
+// AcceptsStr checks if this URN (pattern) accepts a string instance.
+func (c *TaggedUrn) AcceptsStr(instanceStr string) (bool, error) {
+	instance, err := NewTaggedUrnFromString(instanceStr)
+	if err != nil {
+		return false, err
+	}
+	return c.Accepts(instance)
 }
 
 // Specificity returns the specificity score for URN matching
@@ -891,18 +919,18 @@ func (c *TaggedUrn) UnmarshalJSON(data []byte) error {
 // UrnMatcher provides utility methods for matching URNs
 type UrnMatcher struct{}
 
-// FindBestMatch finds the most specific URN that can handle a request
-// All URNs must have the same prefix as the request
+// FindBestMatch finds the most specific URN that conforms to a request's constraints.
+// URNs are instances (capabilities), request is the pattern (requirement).
 func (m *UrnMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*TaggedUrn, error) {
 	var best *TaggedUrn
 	bestSpecificity := -1
 
 	for _, urn := range urns {
-		canHandle, err := urn.CanHandle(request)
+		ok, err := urn.ConformsTo(request)
 		if err != nil {
 			return nil, err
 		}
-		if canHandle {
+		if ok {
 			specificity := urn.Specificity()
 			if specificity > bestSpecificity {
 				best = urn
@@ -914,27 +942,27 @@ func (m *UrnMatcher) FindBestMatch(urns []*TaggedUrn, request *TaggedUrn) (*Tagg
 	return best, nil
 }
 
-// FindAllMatches finds all URNs that can handle a request, sorted by specificity
-// All URNs must have the same prefix as the request
+// FindAllMatches finds all URNs that conform to a request's constraints, sorted by specificity.
+// URNs are instances (capabilities), request is the pattern (requirement).
 func (m *UrnMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*TaggedUrn, error) {
-	var matches []*TaggedUrn
+	var results []*TaggedUrn
 
 	for _, urn := range urns {
-		canHandle, err := urn.CanHandle(request)
+		ok, err := urn.ConformsTo(request)
 		if err != nil {
 			return nil, err
 		}
-		if canHandle {
-			matches = append(matches, urn)
+		if ok {
+			results = append(results, urn)
 		}
 	}
 
 	// Sort by specificity (most specific first)
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Specificity() > matches[j].Specificity()
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Specificity() > results[j].Specificity()
 	})
 
-	return matches, nil
+	return results, nil
 }
 
 // AreCompatible checks if two URN sets are compatible

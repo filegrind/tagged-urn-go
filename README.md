@@ -48,12 +48,12 @@ func main() {
 
     // Check matching
     pattern, _ := taggedurn.NewTaggedUrnFromString("cap:op=generate")
-    matches, err := urn.Matches(pattern)
+    conforms, err := urn.ConformsTo(pattern)
     if err != nil {
         log.Fatal(err)
     }
-    if matches {
-        fmt.Println("URN matches pattern")
+    if conforms {
+        fmt.Println("URN conforms to pattern")
     }
 
     // Get specificity
@@ -74,7 +74,8 @@ func main() {
 | `HasTag(key, value)` | Check if tag exists with value |
 | `WithTag(key, value)` | Return new URN with tag added/updated |
 | `WithoutTag(key)` | Return new URN with tag removed |
-| `Matches(pattern)` | Check if URN matches a pattern |
+| `ConformsTo(pattern)` | Check if URN conforms to a pattern |
+| `Accepts(instance)` | Check if URN (as pattern) accepts an instance |
 | `CanHandle(request)` | Check if URN can handle a request |
 | `Specificity()` | Get graded specificity score |
 | `SpecificityTuple()` | Get (exact, mustHaveAny, mustNot) counts |
