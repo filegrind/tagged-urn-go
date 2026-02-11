@@ -80,7 +80,6 @@ func main() {
 | `Specificity()` | Get graded specificity score |
 | `SpecificityTuple()` | Get (exact, mustHaveAny, mustNot) counts |
 | `IsMoreSpecificThan(other)` | Compare specificity with another URN |
-| `IsCompatibleWith(other)` | Check compatibility with another URN |
 | `ToString()` | Get canonical string representation |
 | `Hash()` | Get SHA256 hash of canonical form |
 

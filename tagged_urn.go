@@ -660,107 +660,9 @@ func (c *TaggedUrn) IsMoreSpecificThan(other *TaggedUrn) (bool, error) {
 		}
 	}
 
-	// Then check if they're compatible
-	compatible, err := c.IsCompatibleWith(other)
-	if err != nil {
-		return false, err
-	}
-	if !compatible {
-		return false, nil
-	}
-
 	return c.Specificity() > other.Specificity(), nil
 }
 
-// IsCompatibleWith checks if this URN is compatible with another
-//
-// Two URNs are compatible if they have the same prefix and can potentially match
-// the same instances (i.e., there exists at least one instance that both patterns accept)
-//
-// Compatibility rules:
-// - K=v and K=w (v≠w): NOT compatible (no instance can match both exact values)
-// - K=! and K=v/K=*: NOT compatible (one requires absent, other requires present)
-// - K=v and K=*: compatible (instance with K=v matches both)
-// - K=? is compatible with anything (no constraint)
-// - Missing entry is compatible with anything (no constraint)
-func (c *TaggedUrn) IsCompatibleWith(other *TaggedUrn) (bool, error) {
-	if other == nil {
-		return false, &TaggedUrnError{
-			Code:    ErrorInvalidFormat,
-			Message: "cannot check compatibility with nil URN",
-		}
-	}
-
-	// First check prefix
-	if c.prefix != other.prefix {
-		return false, &TaggedUrnError{
-			Code:    ErrorPrefixMismatch,
-			Message: fmt.Sprintf("cannot compare URNs with different prefixes: '%s' vs '%s'", c.prefix, other.prefix),
-		}
-	}
-
-	// Get all unique tag keys from both URNs
-	allKeys := make(map[string]bool)
-	for key := range c.tags {
-		allKeys[key] = true
-	}
-	for key := range other.tags {
-		allKeys[key] = true
-	}
-
-	for key := range allKeys {
-		v1, exists1 := c.tags[key]
-		v2, exists2 := other.tags[key]
-
-		var val1, val2 *string
-		if exists1 {
-			val1 = &v1
-		}
-		if exists2 {
-			val2 = &v2
-		}
-
-		if !valuesCompatible(val1, val2) {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// valuesCompatible checks if two pattern values are compatible (could match the same instance)
-func valuesCompatible(v1, v2 *string) bool {
-	// Either missing or ? means no constraint - compatible with anything
-	if v1 == nil || v2 == nil {
-		return true
-	}
-	if *v1 == "?" || *v2 == "?" {
-		return true
-	}
-
-	// Both are ! - compatible (both want absent)
-	if *v1 == "!" && *v2 == "!" {
-		return true
-	}
-
-	// One is ! and other is value or * - NOT compatible
-	if *v1 == "!" || *v2 == "!" {
-		return false
-	}
-
-	// Both are * - compatible
-	if *v1 == "*" && *v2 == "*" {
-		return true
-	}
-
-	// One is * and other is value - compatible (value matches *)
-	if *v1 == "*" || *v2 == "*" {
-		return true
-	}
-
-	// Both are specific values - must be equal
-	return *v1 == *v2
-}
 
 // WithWildcardTag returns a new URN with a specific tag set to wildcard
 func (c *TaggedUrn) WithWildcardTag(key string) *TaggedUrn {
@@ -966,15 +868,22 @@ func (m *UrnMatcher) FindAllMatches(urns []*TaggedUrn, request *TaggedUrn) ([]*T
 }
 
 // AreCompatible checks if two URN sets are compatible
-// All URNs in both sets must have the same prefix
+// Two URNs are compatible if either accepts the other (bidirectional accepts)
 func (m *UrnMatcher) AreCompatible(urns1, urns2 []*TaggedUrn) (bool, error) {
 	for _, u1 := range urns1 {
 		for _, u2 := range urns2 {
-			compatible, err := u1.IsCompatibleWith(u2)
+			fwd, err := u1.Accepts(u2)
 			if err != nil {
 				return false, err
 			}
-			if compatible {
+			if fwd {
+				return true, nil
+			}
+			rev, err := u2.Accepts(u1)
+			if err != nil {
+				return false, err
+			}
+			if rev {
 				return true, nil
 			}
 		}

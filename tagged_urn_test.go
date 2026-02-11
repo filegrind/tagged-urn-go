@@ -293,38 +293,35 @@ func TestSpecificity(t *testing.T) {
 }
 
 func TestCompatibility(t *testing.T) {
-	urn1, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	// TEST526: Compatibility now uses directional Accepts
+	// General pattern (fewer tags) accepts specific instance (more tags)
+	general, err := NewTaggedUrnFromString("cap:op=generate")
 	require.NoError(t, err)
 
-	urn2, err := NewTaggedUrnFromString("cap:op=generate;format=*")
+	specific, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
 	require.NoError(t, err)
 
-	urn3, err := NewTaggedUrnFromString("cap:op=extract;ext=pdf")
+	// General pattern accepts specific instance (missing tag = no constraint)
+	accepts, err := general.Accepts(specific)
+	require.NoError(t, err)
+	assert.True(t, accepts)
+
+	// Specific does NOT accept general (missing tag in instance = fails pattern requirement)
+	accepts, err = specific.Accepts(general)
+	require.NoError(t, err)
+	assert.False(t, accepts)
+
+	// Different values: neither direction accepts
+	different, err := NewTaggedUrnFromString("cap:op=extract;ext=pdf")
 	require.NoError(t, err)
 
-	compatible, err := urn1.IsCompatibleWith(urn2)
+	accepts, err = specific.Accepts(different)
 	require.NoError(t, err)
-	assert.True(t, compatible)
+	assert.False(t, accepts)
 
-	compatible, err = urn2.IsCompatibleWith(urn1)
+	accepts, err = different.Accepts(specific)
 	require.NoError(t, err)
-	assert.True(t, compatible)
-
-	compatible, err = urn1.IsCompatibleWith(urn3)
-	require.NoError(t, err)
-	assert.False(t, compatible)
-
-	// Missing tags are treated as wildcards for compatibility
-	urn4, err := NewTaggedUrnFromString("cap:op=generate")
-	require.NoError(t, err)
-
-	compatible, err = urn1.IsCompatibleWith(urn4)
-	require.NoError(t, err)
-	assert.True(t, compatible)
-
-	compatible, err = urn4.IsCompatibleWith(urn1)
-	require.NoError(t, err)
-	assert.True(t, compatible)
+	assert.False(t, accepts)
 }
 
 func TestConvenienceMethods(t *testing.T) {
@@ -968,7 +965,7 @@ func TestMatchingDifferentPrefixesError(t *testing.T) {
 	_, err = urn1.ConformsTo(urn2)
 	assert.Error(t, err)
 
-	_, err = urn1.IsCompatibleWith(urn2)
+	_, err = urn1.Accepts(urn2)
 	assert.Error(t, err)
 
 	_, err = urn1.IsMoreSpecificThan(urn2)
@@ -1378,26 +1375,31 @@ func TestEmptyValueStillError(t *testing.T) {
 }
 
 func TestValuelessTagCompatibility(t *testing.T) {
-	// Value-less tags are compatible with any value
-	urn1, err := NewTaggedUrnFromString("cap:op=generate;ext")
+	// TEST564: Value-less tag (ext=*) accepts any specific value
+	pattern, err := NewTaggedUrnFromString("cap:op=generate;ext")
 	require.NoError(t, err)
-	urn2, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	instance1, err := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
 	require.NoError(t, err)
-	urn3, err := NewTaggedUrnFromString("cap:op=generate;ext=docx")
+	instance2, err := NewTaggedUrnFromString("cap:op=generate;ext=docx")
 	require.NoError(t, err)
 
-	compatible, err := urn1.IsCompatibleWith(urn2)
+	// Pattern with wildcard tag accepts specific instances
+	accepts, err := pattern.Accepts(instance1)
 	require.NoError(t, err)
-	assert.True(t, compatible)
+	assert.True(t, accepts)
 
-	compatible, err = urn1.IsCompatibleWith(urn3)
+	accepts, err = pattern.Accepts(instance2)
 	require.NoError(t, err)
-	assert.True(t, compatible)
+	assert.True(t, accepts)
 
-	// But urn2 and urn3 are not compatible (different specific values)
-	compatible, err = urn2.IsCompatibleWith(urn3)
+	// Two different specific values: neither accepts the other
+	accepts, err = instance1.Accepts(instance2)
 	require.NoError(t, err)
-	assert.False(t, compatible)
+	assert.False(t, accepts)
+
+	accepts, err = instance2.Accepts(instance1)
+	require.NoError(t, err)
+	assert.False(t, accepts)
 }
 
 func TestValuelessNumericKeyStillRejected(t *testing.T) {
@@ -1681,50 +1683,47 @@ func TestSerializationRoundTripSpecialValues(t *testing.T) {
 }
 
 func TestCompatibilityWithSpecialValues(t *testing.T) {
-	// ! is incompatible with * and specific values
+	// TEST576: Compatibility via bidirectional accepts
 	mustNot, _ := NewTaggedUrnFromString("cap:ext=!")
 	mustHave, _ := NewTaggedUrnFromString("cap:ext=*")
 	specific, _ := NewTaggedUrnFromString("cap:ext=pdf")
 	unspecified, _ := NewTaggedUrnFromString("cap:ext=?")
 	missing, _ := NewTaggedUrnFromString("cap:")
 
-	compatible, _ := mustNot.IsCompatibleWith(mustHave)
-	assert.False(t, compatible)
+	// Helper: bidirectional accepts = compatible
+	biAccepts := func(a, b *TaggedUrn) bool {
+		fwd, _ := a.Accepts(b)
+		rev, _ := b.Accepts(a)
+		return fwd || rev
+	}
 
-	compatible, _ = mustNot.IsCompatibleWith(specific)
-	assert.False(t, compatible)
+	// ! vs *: neither direction accepts (absent vs present)
+	assert.False(t, biAccepts(mustNot, mustHave))
 
-	compatible, _ = mustNot.IsCompatibleWith(unspecified)
-	assert.True(t, compatible)
+	// ! vs specific: neither direction accepts
+	assert.False(t, biAccepts(mustNot, specific))
 
-	compatible, _ = mustNot.IsCompatibleWith(missing)
-	assert.True(t, compatible)
+	// ! vs ?: ? accepts anything in either direction
+	assert.True(t, biAccepts(mustNot, unspecified))
 
-	compatible, _ = mustNot.IsCompatibleWith(mustNot)
-	assert.True(t, compatible)
+	// ! vs missing: ! accepts missing (absent)
+	assert.True(t, biAccepts(mustNot, missing))
 
-	// * is compatible with specific values
-	compatible, _ = mustHave.IsCompatibleWith(specific)
-	assert.True(t, compatible)
+	// ! vs !: both want absent, accepts each other
+	assert.True(t, biAccepts(mustNot, mustNot))
 
-	compatible, _ = mustHave.IsCompatibleWith(mustHave)
-	assert.True(t, compatible)
+	// * vs specific: * accepts specific
+	assert.True(t, biAccepts(mustHave, specific))
 
-	// ? is compatible with everything
-	compatible, _ = unspecified.IsCompatibleWith(mustNot)
-	assert.True(t, compatible)
+	// * vs *: both accept each other
+	assert.True(t, biAccepts(mustHave, mustHave))
 
-	compatible, _ = unspecified.IsCompatibleWith(mustHave)
-	assert.True(t, compatible)
-
-	compatible, _ = unspecified.IsCompatibleWith(specific)
-	assert.True(t, compatible)
-
-	compatible, _ = unspecified.IsCompatibleWith(unspecified)
-	assert.True(t, compatible)
-
-	compatible, _ = unspecified.IsCompatibleWith(missing)
-	assert.True(t, compatible)
+	// ? vs everything: ? accepts anything
+	assert.True(t, biAccepts(unspecified, mustNot))
+	assert.True(t, biAccepts(unspecified, mustHave))
+	assert.True(t, biAccepts(unspecified, specific))
+	assert.True(t, biAccepts(unspecified, unspecified))
+	assert.True(t, biAccepts(unspecified, missing))
 }
 
 func TestSpecificityWithSpecialValues(t *testing.T) {
