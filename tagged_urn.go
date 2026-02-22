@@ -663,6 +663,95 @@ func (c *TaggedUrn) IsMoreSpecificThan(other *TaggedUrn) (bool, error) {
 	return c.Specificity() > other.Specificity(), nil
 }
 
+// IsEquivalent checks if two URNs are equivalent (identical tag sets).
+//
+// From order theory: in the specialization partial order defined by
+// Accepts/ConformsTo, two elements are **equivalent** when each
+// accepts the other (antisymmetry: a ≤ b ∧ b ≤ a → a = b).
+//
+// This is stricter than IsComparable — it requires the tag sets to
+// be identical, not just related by specialization.
+//
+//	a.IsEquivalent(b)  ≡  a.Accepts(b) && b.Accepts(a)
+//
+// Returns PrefixMismatch error if prefixes differ (inherited from
+// Accepts/ConformsTo — both sides return false on mismatch, but
+// since we AND them, the error propagates).
+func (c *TaggedUrn) IsEquivalent(other *TaggedUrn) (bool, error) {
+	if other == nil {
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot compare against nil URN",
+		}
+	}
+
+	aAcceptsB, err := c.Accepts(other)
+	if err != nil {
+		return false, err
+	}
+
+	bAcceptsA, err := other.Accepts(c)
+	if err != nil {
+		return false, err
+	}
+
+	return aAcceptsB && bAcceptsA, nil
+}
+
+// IsComparable checks if two URNs are comparable (one is a specialization of the other).
+//
+// From order theory: in a partial order, two elements are **comparable**
+// when one is ≤ the other. Elements that are NOT comparable are in
+// different branches of the specialization lattice (e.g., `media:pdf;bytes`
+// vs `media:txt;textable` — neither accepts the other).
+//
+// This is the weakest relation: it finds all URNs on the same
+// generalization/specialization chain. Use it when you want to discover
+// all handlers that *could* service a request, whether they are more
+// general (fallback) or more specific (exact match).
+//
+//	a.IsComparable(b)  ≡  a.Accepts(b) || b.Accepts(a)
+//
+// Returns PrefixMismatch error if prefixes differ (inherited from
+// Accepts/ConformsTo).
+func (c *TaggedUrn) IsComparable(other *TaggedUrn) (bool, error) {
+	if other == nil {
+		return false, &TaggedUrnError{
+			Code:    ErrorInvalidFormat,
+			Message: "cannot compare against nil URN",
+		}
+	}
+
+	aAcceptsB, err := c.Accepts(other)
+	if err != nil {
+		return false, err
+	}
+
+	bAcceptsA, err := other.Accepts(c)
+	if err != nil {
+		return false, err
+	}
+
+	return aAcceptsB || bAcceptsA, nil
+}
+
+// IsEquivalentStr is a string variant of IsEquivalent.
+func (c *TaggedUrn) IsEquivalentStr(otherStr string) (bool, error) {
+	other, err := NewTaggedUrnFromString(otherStr)
+	if err != nil {
+		return false, err
+	}
+	return c.IsEquivalent(other)
+}
+
+// IsComparableStr is a string variant of IsComparable.
+func (c *TaggedUrn) IsComparableStr(otherStr string) (bool, error) {
+	other, err := NewTaggedUrnFromString(otherStr)
+	if err != nil {
+		return false, err
+	}
+	return c.IsComparable(other)
+}
 
 // WithWildcardTag returns a new URN with a specific tag set to wildcard
 func (c *TaggedUrn) WithWildcardTag(key string) *TaggedUrn {
@@ -895,6 +984,7 @@ func (m *UrnMatcher) AreCompatible(urns1, urns2 []*TaggedUrn) (bool, error) {
 type TaggedUrnBuilder struct {
 	prefix string
 	tags   map[string]string
+	err    error
 }
 
 // NewTaggedUrnBuilder creates a new builder with a specified prefix (required)
@@ -907,13 +997,37 @@ func NewTaggedUrnBuilder(prefix string) *TaggedUrnBuilder {
 
 // Tag adds or updates a tag
 // Key is normalized to lowercase; value is preserved as-is
+// Tracks error if value is empty (use SoloTag for wildcard)
+// Error is returned at Build() time
 func (b *TaggedUrnBuilder) Tag(key, value string) *TaggedUrnBuilder {
+	if b.err != nil {
+		return b // Already have an error, don't process further
+	}
+	if value == "" {
+		b.err = &TaggedUrnError{
+			Code:    ErrorEmptyTag,
+			Message: fmt.Sprintf("empty value for key '%s' (use '*' for wildcard)", key),
+		}
+		return b
+	}
 	b.tags[strings.ToLower(key)] = value
+	return b
+}
+
+// SoloTag adds a tag with wildcard value (*)
+// Key is normalized to lowercase
+func (b *TaggedUrnBuilder) SoloTag(key string) *TaggedUrnBuilder {
+	b.tags[strings.ToLower(key)] = "*"
 	return b
 }
 
 // Build creates the final TaggedUrn
 func (b *TaggedUrnBuilder) Build() (*TaggedUrn, error) {
+	// Check for errors accumulated during building
+	if b.err != nil {
+		return nil, b.err
+	}
+
 	if len(b.tags) == 0 {
 		return nil, &TaggedUrnError{
 			Code:    ErrorInvalidFormat,

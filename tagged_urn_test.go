@@ -1766,3 +1766,326 @@ func TestSpecificityWithSpecialValues(t *testing.T) {
 	assert.Equal(t, 1, mha)
 	assert.Equal(t, 1, mn)
 }
+
+// =========================================================================
+// ORDER-THEORETIC RELATIONS: IsEquivalent, IsComparable
+// =========================================================================
+
+// TEST578: Equivalent URNs with identical tag sets
+func Test_578_EquivalentIdenticalTags(t *testing.T) {
+	a, _ := NewTaggedUrnFromString("cap:op=generate;ext=pdf")
+	b, _ := NewTaggedUrnFromString("cap:ext=pdf;op=generate") // same tags, different order
+	equiv, err := a.IsEquivalent(b)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	equiv, err = b.IsEquivalent(a) // symmetric
+	require.NoError(t, err)
+	assert.True(t, equiv)
+}
+
+// TEST579: Non-equivalent URNs where one is more specific
+func Test_579_NotEquivalentWhenOneMoreSpecific(t *testing.T) {
+	general, _ := NewTaggedUrnFromString("media:bytes")
+	specific, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	equiv, err := general.IsEquivalent(specific)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+	equiv, err = specific.IsEquivalent(general)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+}
+
+// TEST580: Comparable URNs on the same specialization chain
+func Test_580_ComparableSpecializationChain(t *testing.T) {
+	general, _ := NewTaggedUrnFromString("media:bytes")
+	specific, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	comp, err := general.IsComparable(specific)
+	require.NoError(t, err)
+	assert.True(t, comp)
+	comp, err = specific.IsComparable(general) // symmetric
+	require.NoError(t, err)
+	assert.True(t, comp)
+}
+
+// TEST581: Incomparable URNs in different branches of the lattice
+func Test_581_IncomparableDifferentBranches(t *testing.T) {
+	pdf, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	txt, _ := NewTaggedUrnFromString("media:txt;textable")
+	comp, err := pdf.IsComparable(txt)
+	require.NoError(t, err)
+	assert.False(t, comp)
+	comp, err = txt.IsComparable(pdf)
+	require.NoError(t, err)
+	assert.False(t, comp)
+}
+
+// TEST582: Equivalent implies comparable but not vice versa
+func Test_582_EquivalentImpliesComparable(t *testing.T) {
+	a, _ := NewTaggedUrnFromString("cap:op=test;ext=pdf")
+	b, _ := NewTaggedUrnFromString("cap:op=test;ext=pdf")
+	equiv, err := a.IsEquivalent(b)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	comp, err := a.IsComparable(b)
+	require.NoError(t, err)
+	assert.True(t, comp)
+
+	// comparable but NOT equivalent
+	general, _ := NewTaggedUrnFromString("cap:op=test")
+	specific, _ := NewTaggedUrnFromString("cap:op=test;ext=pdf")
+	equiv, err = general.IsEquivalent(specific)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+	comp, err = general.IsComparable(specific)
+	require.NoError(t, err)
+	assert.True(t, comp)
+}
+
+// TEST583: Prefix mismatch returns error for both relations
+func Test_583_PrefixMismatchErrors(t *testing.T) {
+	cap, _ := NewTaggedUrnFromString("cap:op=test")
+	media, _ := NewTaggedUrnFromString("media:bytes")
+	_, err := cap.IsEquivalent(media)
+	assert.Error(t, err)
+	_, err = cap.IsComparable(media)
+	assert.Error(t, err)
+}
+
+// TEST584: Empty tag set is comparable to everything with same prefix
+func Test_584_EmptyTagsComparableToAll(t *testing.T) {
+	empty, _ := NewTaggedUrnFromString("media:")
+	specific, _ := NewTaggedUrnFromString("media:pdf;bytes;thumbnail")
+	comp, err := empty.IsComparable(specific)
+	require.NoError(t, err)
+	assert.True(t, comp)
+	equiv, err := empty.IsEquivalent(specific)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+	empty2, _ := NewTaggedUrnFromString("media:")
+	equiv, err = empty.IsEquivalent(empty2)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+}
+
+// TEST585: String variants of IsEquivalent and IsComparable
+func Test_585_StringVariants(t *testing.T) {
+	urn, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	equiv, err := urn.IsEquivalentStr("media:bytes;pdf")
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	equiv, err = urn.IsEquivalentStr("media:bytes")
+	require.NoError(t, err)
+	assert.False(t, equiv)
+	comp, err := urn.IsComparableStr("media:bytes")
+	require.NoError(t, err)
+	assert.True(t, comp)
+	comp, err = urn.IsComparableStr("media:txt;textable")
+	require.NoError(t, err)
+	assert.False(t, comp)
+}
+
+// TEST586: Special values (*, !, ?) with IsEquivalent and IsComparable
+func Test_586_SpecialValues(t *testing.T) {
+	mustHave, _ := NewTaggedUrnFromString("cap:ext")
+	exact, _ := NewTaggedUrnFromString("cap:ext=pdf")
+	mustNot, _ := NewTaggedUrnFromString("cap:ext=!")
+	unspecified, _ := NewTaggedUrnFromString("cap:ext=?")
+
+	equiv, err := mustHave.IsEquivalent(exact)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	comp, err := mustHave.IsComparable(exact)
+	require.NoError(t, err)
+	assert.True(t, comp)
+
+	comp, err = mustNot.IsComparable(exact)
+	require.NoError(t, err)
+	assert.False(t, comp)
+	equiv, err = mustNot.IsEquivalent(exact)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+
+	comp, err = mustNot.IsComparable(mustHave)
+	require.NoError(t, err)
+	assert.False(t, comp)
+	equiv, err = mustNot.IsEquivalent(mustHave)
+	require.NoError(t, err)
+	assert.False(t, equiv)
+
+	equiv, err = unspecified.IsEquivalent(exact)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	equiv, err = unspecified.IsEquivalent(mustHave)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+	equiv, err = unspecified.IsEquivalent(mustNot)
+	require.NoError(t, err)
+	assert.True(t, equiv)
+}
+
+// =========================================================================
+// BUILDER TESTS
+// =========================================================================
+
+// TEST587: Builder fluent API for tag manipulation
+func Test_587_BuilderFluentAPI(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").
+		Tag("op", "generate").
+		Tag("target", "thumbnail").
+		Tag("format", "pdf").
+		Tag("output", "binary").
+		Build()
+	require.NoError(t, err)
+
+	val, exists := urn.GetTag("op")
+	assert.True(t, exists)
+	assert.Equal(t, "generate", val)
+	val, exists = urn.GetTag("target")
+	assert.True(t, exists)
+	assert.Equal(t, "thumbnail", val)
+	val, exists = urn.GetTag("format")
+	assert.True(t, exists)
+	assert.Equal(t, "pdf", val)
+	val, exists = urn.GetTag("output")
+	assert.True(t, exists)
+	assert.Equal(t, "binary", val)
+}
+
+// TEST588: Builder with custom tags
+func Test_588_BuilderCustomTags(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").
+		Tag("engine", "v2").
+		Tag("quality", "high").
+		Tag("op", "compress").
+		Build()
+	require.NoError(t, err)
+
+	val, _ := urn.GetTag("engine")
+	assert.Equal(t, "v2", val)
+	val, _ = urn.GetTag("quality")
+	assert.Equal(t, "high", val)
+	val, _ = urn.GetTag("op")
+	assert.Equal(t, "compress", val)
+}
+
+// TEST589: Builder tag overrides
+func Test_589_BuilderTagOverrides(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").
+		Tag("op", "convert").
+		Tag("format", "jpg").
+		Build()
+	require.NoError(t, err)
+
+	val, _ := urn.GetTag("op")
+	assert.Equal(t, "convert", val)
+	val, _ = urn.GetTag("format")
+	assert.Equal(t, "jpg", val)
+}
+
+// TEST590: Builder empty build returns error
+func Test_590_BuilderEmptyBuild(t *testing.T) {
+	_, err := NewTaggedUrnBuilder("cap").Build()
+	assert.Error(t, err)
+}
+
+// TEST591: Builder with single tag
+func Test_591_BuilderSingleTag(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").Tag("type", "utility").Build()
+	require.NoError(t, err)
+
+	assert.Equal(t, "cap:type=utility", urn.ToString())
+	val, _ := urn.GetTag("type")
+	assert.Equal(t, "utility", val)
+	assert.Equal(t, 3, urn.Specificity())
+}
+
+// TEST592: Builder with complex multi-tag URN
+func Test_592_BuilderComplex(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").
+		Tag("type", "media").
+		Tag("op", "transcode").
+		Tag("target", "video").
+		Tag("format", "mp4").
+		Tag("codec", "h264").
+		Tag("quality", "1080p").
+		Tag("framerate", "30fps").
+		Tag("output", "binary").
+		Build()
+	require.NoError(t, err)
+
+	assert.Equal(t, "media", urn.AllTags()["type"])
+	assert.Equal(t, "transcode", urn.AllTags()["op"])
+	assert.Equal(t, "video", urn.AllTags()["target"])
+	assert.Equal(t, "mp4", urn.AllTags()["format"])
+	assert.Equal(t, "h264", urn.AllTags()["codec"])
+	assert.Equal(t, "1080p", urn.AllTags()["quality"])
+	assert.Equal(t, "30fps", urn.AllTags()["framerate"])
+	assert.Equal(t, "binary", urn.AllTags()["output"])
+	assert.Equal(t, 24, urn.Specificity())
+}
+
+// TEST593: Builder with wildcards
+func Test_593_BuilderWildcards(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("cap").
+		Tag("op", "convert").
+		SoloTag("ext").
+		SoloTag("quality").
+		Build()
+	require.NoError(t, err)
+
+	assert.Equal(t, "cap:ext;op=convert;quality", urn.ToString())
+	assert.Equal(t, 7, urn.Specificity())
+	val, _ := urn.GetTag("ext")
+	assert.Equal(t, "*", val)
+	val, _ = urn.GetTag("quality")
+	assert.Equal(t, "*", val)
+}
+
+// TEST594: Builder with custom prefix
+func Test_594_BuilderCustomPrefix(t *testing.T) {
+	urn, err := NewTaggedUrnBuilder("myapp").Tag("key", "value").Build()
+	require.NoError(t, err)
+
+	assert.Equal(t, "myapp", urn.GetPrefix())
+	assert.Equal(t, "myapp:key=value", urn.ToString())
+}
+
+// TEST595: Builder matching with built URN
+func Test_595_BuilderMatchingWithBuiltUrn(t *testing.T) {
+	specificInstance, _ := NewTaggedUrnBuilder("cap").
+		Tag("op", "generate").
+		Tag("target", "thumbnail").
+		Tag("format", "pdf").
+		Build()
+
+	generalPattern, _ := NewTaggedUrnBuilder("cap").Tag("op", "generate").Build()
+
+	wildcardPattern, _ := NewTaggedUrnBuilder("cap").
+		Tag("op", "generate").
+		Tag("target", "thumbnail").
+		SoloTag("ext").
+		Build()
+
+	conforms, err := specificInstance.ConformsTo(generalPattern)
+	require.NoError(t, err)
+	assert.True(t, conforms)
+
+	conforms, err = specificInstance.ConformsTo(wildcardPattern)
+	require.NoError(t, err)
+	assert.False(t, conforms)
+
+	moreSpec, err := specificInstance.IsMoreSpecificThan(generalPattern)
+	require.NoError(t, err)
+	assert.True(t, moreSpec)
+
+	assert.Equal(t, 9, specificInstance.Specificity())
+	assert.Equal(t, 3, generalPattern.Specificity())
+	assert.Equal(t, 8, wildcardPattern.Specificity())
+}
+
+// TEST: Builder rejects empty value
+func Test_BuilderRejectsEmptyValue(t *testing.T) {
+	_, err := NewTaggedUrnBuilder("cap").Tag("key", "").Build()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty value")
+}

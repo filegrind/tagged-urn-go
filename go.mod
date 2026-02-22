@@ -1,4 +1,5 @@
 module github.com/filegrind/tagged-urn-go
+// version: 0.17.4431
 
 go 1.21
 
