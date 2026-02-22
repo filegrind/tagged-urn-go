@@ -1785,8 +1785,8 @@ func Test_578_EquivalentIdenticalTags(t *testing.T) {
 
 // TEST579: Non-equivalent URNs where one is more specific
 func Test_579_NotEquivalentWhenOneMoreSpecific(t *testing.T) {
-	general, _ := NewTaggedUrnFromString("media:bytes")
-	specific, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	general, _ := NewTaggedUrnFromString("media:")
+	specific, _ := NewTaggedUrnFromString("media:pdf")
 	equiv, err := general.IsEquivalent(specific)
 	require.NoError(t, err)
 	assert.False(t, equiv)
@@ -1797,8 +1797,8 @@ func Test_579_NotEquivalentWhenOneMoreSpecific(t *testing.T) {
 
 // TEST580: Comparable URNs on the same specialization chain
 func Test_580_ComparableSpecializationChain(t *testing.T) {
-	general, _ := NewTaggedUrnFromString("media:bytes")
-	specific, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	general, _ := NewTaggedUrnFromString("media:")
+	specific, _ := NewTaggedUrnFromString("media:pdf")
 	comp, err := general.IsComparable(specific)
 	require.NoError(t, err)
 	assert.True(t, comp)
@@ -1809,7 +1809,7 @@ func Test_580_ComparableSpecializationChain(t *testing.T) {
 
 // TEST581: Incomparable URNs in different branches of the lattice
 func Test_581_IncomparableDifferentBranches(t *testing.T) {
-	pdf, _ := NewTaggedUrnFromString("media:pdf;bytes")
+	pdf, _ := NewTaggedUrnFromString("media:pdf")
 	txt, _ := NewTaggedUrnFromString("media:txt;textable")
 	comp, err := pdf.IsComparable(txt)
 	require.NoError(t, err)
@@ -1844,7 +1844,7 @@ func Test_582_EquivalentImpliesComparable(t *testing.T) {
 // TEST583: Prefix mismatch returns error for both relations
 func Test_583_PrefixMismatchErrors(t *testing.T) {
 	cap, _ := NewTaggedUrnFromString("cap:op=test")
-	media, _ := NewTaggedUrnFromString("media:bytes")
+	media, _ := NewTaggedUrnFromString("media:")
 	_, err := cap.IsEquivalent(media)
 	assert.Error(t, err)
 	_, err = cap.IsComparable(media)
@@ -1854,7 +1854,7 @@ func Test_583_PrefixMismatchErrors(t *testing.T) {
 // TEST584: Empty tag set is comparable to everything with same prefix
 func Test_584_EmptyTagsComparableToAll(t *testing.T) {
 	empty, _ := NewTaggedUrnFromString("media:")
-	specific, _ := NewTaggedUrnFromString("media:pdf;bytes;thumbnail")
+	specific, _ := NewTaggedUrnFromString("media:pdf;thumbnail")
 	comp, err := empty.IsComparable(specific)
 	require.NoError(t, err)
 	assert.True(t, comp)
@@ -1869,14 +1869,14 @@ func Test_584_EmptyTagsComparableToAll(t *testing.T) {
 
 // TEST585: String variants of IsEquivalent and IsComparable
 func Test_585_StringVariants(t *testing.T) {
-	urn, _ := NewTaggedUrnFromString("media:pdf;bytes")
-	equiv, err := urn.IsEquivalentStr("media:bytes;pdf")
+	urn, _ := NewTaggedUrnFromString("media:pdf")
+	equiv, err := urn.IsEquivalentStr("media:pdf")
 	require.NoError(t, err)
 	assert.True(t, equiv)
-	equiv, err = urn.IsEquivalentStr("media:bytes")
+	equiv, err = urn.IsEquivalentStr("media:")
 	require.NoError(t, err)
 	assert.False(t, equiv)
-	comp, err := urn.IsComparableStr("media:bytes")
+	comp, err := urn.IsComparableStr("media:")
 	require.NoError(t, err)
 	assert.True(t, comp)
 	comp, err = urn.IsComparableStr("media:txt;textable")
