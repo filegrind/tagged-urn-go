@@ -1,5 +1,5 @@
-module github.com/filegrind/tagged-urn-go
-// version: 0.19.4904
+module github.com/machinafabric/tagged-urn-go
+// version: 0.20.4912
 
 go 1.21
 

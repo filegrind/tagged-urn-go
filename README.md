@@ -16,7 +16,7 @@ Go implementation of Tagged URN with strict validation, pattern matching, and gr
 ## Installation
 
 ```bash
-go get github.com/filegrind/tagged-urn-go
+go get github.com/machinefabric/tagged-urn-go
 ```
 
 ## Quick Start
@@ -28,7 +28,7 @@ import (
     "fmt"
     "log"
 
-    taggedurn "github.com/filegrind/tagged-urn-go"
+    taggedurn "github.com/machinefabric/tagged-urn-go"
 )
 
 func main() {
@@ -135,8 +135,8 @@ go test -v ./...
 ## Cross-Language Compatibility
 
 This Go implementation produces identical results to:
-- [Rust implementation](https://github.com/filegrind/tagged-urn-rs)
-- [JavaScript implementation](https://github.com/filegrind/tagged-urn-js)
-- [Objective-C implementation](https://github.com/filegrind/tagged-urn-objc)
+- [Rust implementation](https://github.com/machinefabric/tagged-urn-rs)
+- [JavaScript implementation](https://github.com/machinefabric/tagged-urn-js)
+- [Objective-C implementation](https://github.com/machinefabric/tagged-urn-objc)
 
-All implementations pass the same test cases and follow identical rules. See [Tagged URN RULES.md](https://github.com/filegrind/tagged-urn-rs/blob/main/docs/RULES.md) for the complete specification.
+All implementations pass the same test cases and follow identical rules. See [Tagged URN RULES.md](https://github.com/machinefabric/tagged-urn-rs/blob/main/docs/RULES.md) for the complete specification.
